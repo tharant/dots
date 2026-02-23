@@ -7,13 +7,16 @@ set -euo pipefail
 
 REPO_URL="${DOTS_REPO_URL:-https://github.com/tharant/dots.git}"
 DOTS_DIR="${DOTS_DIR:-$HOME/.dots}"
+FORCE="${FORCE:-false}"
 
 usage() {
-    echo "Usage: $(basename "$0") [--restow] [--adopt] [--unstow]"
+    echo "Usage: $(basename "$0") [--restow] [--adopt] [--unstow] [--force] [--verify]"
     echo "  (no args)   Full bootstrap: install deps, clone, decrypt, stow"
     echo "  --restow    Re-stow all packages (use after git pull)"
     echo "  --adopt     Adopt existing files into the repo, then re-stow"
     echo "  --unstow    Remove all symlinks managed by stow"
+    echo "  --force     Force re-decrypt and re-stow (skip freshness checks)"
+    echo "  --verify    Run verification checks on current deployment"
     exit 0
 }
 
@@ -22,6 +25,24 @@ usage() {
 info()  { echo -e "\033[1;34m==>\033[0m $*"; }
 warn()  { echo -e "\033[1;33m==> WARNING:\033[0m $*"; }
 error() { echo -e "\033[1;31m==> ERROR:\033[0m $*"; exit 1; }
+
+# Track failures for non-fatal errors
+FAILURES=()
+
+on_error() {
+    local exit_code=$?
+    error "Step failed with exit code $exit_code. Run with --help for options."
+}
+
+report_failures() {
+    if [[ ${#FAILURES[@]} -gt 0 ]]; then
+        warn "The following steps had issues:"
+        for f in "${FAILURES[@]}"; do
+            warn "  - $f"
+        done
+        return 1
+    fi
+}
 
 detect_platform() {
     case "$(uname -s)" in
@@ -110,7 +131,7 @@ setup_repo() {
 
 decrypt_secrets() {
     info "Decrypting secrets..."
-    "$DOTS_DIR/scripts/decrypt.sh"
+    FORCE="$FORCE" "$DOTS_DIR/scripts/decrypt.sh"
 }
 
 # --- Stow dotfiles ---
@@ -127,31 +148,31 @@ stow_packages() {
 
     local stow_dir="$DOTS_DIR"
 
-    # Stow common configs
-    if [[ -d "$stow_dir/common" ]]; then
-        info "$action_label common configs..."
-        for pkg in "$stow_dir/common"/*/; do
+    stow_one_dir() {
+        local base_dir="$1"
+        local label="$2"
+        [[ -d "$base_dir" ]] || return 0
+        info "$action_label $label configs..."
+        for pkg in "$base_dir"/*/; do
+            [[ -d "$pkg" ]] || continue
+            local pkg_name
             pkg_name="$(basename "$pkg")"
             info "  $action_label $pkg_name"
-            stow -d "$stow_dir/common" -t "$HOME" "${stow_flags[@]}" "$pkg_name"
+            if ! stow -d "$base_dir" -t "$HOME" "${stow_flags[@]}" "$pkg_name" 2>&1; then
+                warn "Failed to stow $pkg_name — continuing with remaining packages"
+                FAILURES+=("stow: $pkg_name")
+            fi
         done
-    fi
+    }
 
-    # Stow platform-specific configs
-    local platform_dir="$stow_dir/$PLATFORM"
-    if [[ -d "$platform_dir" ]]; then
-        info "$action_label $PLATFORM-specific configs..."
-        for pkg in "$platform_dir"/*/; do
-            pkg_name="$(basename "$pkg")"
-            info "  $action_label $pkg_name"
-            stow -d "$platform_dir" -t "$HOME" "${stow_flags[@]}" "$pkg_name"
-        done
-    fi
+    stow_one_dir "$stow_dir/common" "common"
+    stow_one_dir "$stow_dir/$PLATFORM" "$PLATFORM"
 }
 
 # --- Main ---
 
 main() {
+    trap on_error ERR
     PLATFORM="$(detect_platform)"
     info "Detected platform: $PLATFORM"
 
@@ -169,6 +190,19 @@ main() {
             install_stow
             stow_packages --unstow
             info "All symlinks removed."
+            report_failures
+            return
+            ;;
+        --force)
+            FORCE=true
+            install_age
+            install_stow
+            setup_repo
+            decrypt_secrets
+            stow_packages
+            ;;
+        --verify)
+            "$DOTS_DIR/scripts/verify.sh"
             return
             ;;
         "")
@@ -185,6 +219,7 @@ main() {
 
     info "Done! Dotfiles deployed."
     info "Log out and back in (or source ~/.bashrc) for changes to take effect."
+    report_failures
 }
 
 main "$@"

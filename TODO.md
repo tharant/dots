@@ -14,9 +14,9 @@ Planned enhancements for the dots repo, organized into phases.
 
 ## Phase B: Robustness & Verification
 
-- [ ] Add `scripts/verify.sh` — validate symlinks, permissions, file existence
-- [ ] Improve `setup.sh` — better error handling, idempotent re-runs
-- [ ] Add neovim config package (`common/nvim/`)
+- [x] Add `scripts/verify.sh` — validate symlinks, permissions, file existence
+- [x] Improve `setup.sh` — better error handling, idempotent re-runs
+- [x] Add neovim config package (`common/nvim/`)
 
 ## Phase C: Polish
 
