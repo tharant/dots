@@ -43,6 +43,13 @@ decrypt_file() {
     fi
 
     local target="$target_dir/$filename"
+
+    # Skip if target exists and is newer than source (unless FORCE)
+    if [[ "${FORCE:-false}" != "true" && -f "$target" && "$target" -nt "$age_file" ]]; then
+        echo "Skipping (up to date): $rel_path -> $target"
+        return
+    fi
+
     mkdir -p "$target_dir"
 
     echo "Decrypting: $rel_path -> $target"
