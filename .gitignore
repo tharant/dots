@@ -1,0 +1,28 @@
+# Plaintext secrets — never commit these
+id_rsa
+id_ed25519
+id_ecdsa
+id_dsa
+*.pem
+*.key
+*.secret
+.env
+.env.*
+!.env.example
+
+# age identity (private key)
+keys.txt
+
+# Worktrees
+.worktrees/
+
+# IDE
+.idea/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor state/backups
+.viminfo
+*~

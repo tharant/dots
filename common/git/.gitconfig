@@ -1,0 +1,26 @@
+[user]
+	name = Jacob Lambert
+	email = me@tharant.net
+
+[init]
+	defaultBranch = main
+
+[pull]
+	rebase = true
+
+[push]
+	autoSetupRemote = true
+
+[core]
+	editor = vim
+	excludesFile = ~/.gitignore_global
+
+[color]
+	ui = auto
+
+[alias]
+	st = status
+	co = checkout
+	br = branch
+	ci = commit
+	lg = log --oneline --graph --decorate

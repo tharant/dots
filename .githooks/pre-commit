@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Pre-commit hook: run shellcheck on staged bash files
+# Install: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+if ! command -v shellcheck &>/dev/null; then
+  echo "pre-commit: shellcheck not found, skipping (install with: brew install shellcheck)"
+  exit 0
+fi
+
+# Collect staged bash files (scripts + dotfiles)
+mapfile -t files < <(
+  git diff --cached --name-only --diff-filter=ACM | while read -r f; do
+    case "$f" in
+      *.sh)           echo "$f" ;;
+      */.bashrc)      echo "$f" ;;
+      */.bash_profile) echo "$f" ;;
+      */.bash_aliases) echo "$f" ;;
+      */.bash_functions) echo "$f" ;;
+      */.bash_sensible) echo "$f" ;;
+      */.bash_linux)  echo "$f" ;;
+    esac
+  done
+)
+
+if [[ ${#files[@]} -eq 0 ]]; then
+  exit 0
+fi
+
+echo "pre-commit: running shellcheck on ${#files[@]} file(s)..."
+
+failed=0
+for f in "${files[@]}"; do
+  if ! shellcheck -s bash -e SC1090,SC1091 "$f"; then
+    failed=1
+  fi
+done
+
+if [[ $failed -ne 0 ]]; then
+  echo ""
+  echo "pre-commit: shellcheck found issues. Fix them before committing."
+  echo "To bypass: git commit --no-verify"
+  exit 1
+fi
+
+echo "pre-commit: shellcheck passed."
