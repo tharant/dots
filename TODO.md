@@ -20,6 +20,6 @@ Planned enhancements for the dots repo, organized into phases.
 
 ## Phase C: Polish
 
-- [ ] Add a taskrunner (Makefile or Justfile) for common operations
-- [ ] Prune BSD skeleton (or populate it)
-- [ ] Add `.editorconfig` for consistent formatting
+- [x] Add a taskrunner (Makefile or Justfile) for common operations
+- [x] Prune BSD skeleton (or populate it)
+- [x] Add `.editorconfig` for consistent formatting

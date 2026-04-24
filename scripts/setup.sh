@@ -115,6 +115,52 @@ install_stow() {
     esac
 }
 
+install_just() {
+    if command_exists just; then
+        info "just already installed"
+        return
+    fi
+
+    info "Installing just..."
+    case "$PLATFORM" in
+        macos)
+            if command_exists brew; then
+                brew install just
+            else
+                error "Homebrew not found. Install from https://brew.sh first, or install just manually."
+            fi
+            ;;
+        linux)
+            if command_exists apt-get; then
+                sudo apt-get install -y just 2>/dev/null || {
+                    warn "just not in apt repos — install manually from https://github.com/casey/just"
+                    FAILURES+=("install: just")
+                    return
+                }
+            elif command_exists dnf; then
+                sudo dnf install -y just 2>/dev/null || {
+                    warn "just not in dnf repos — install manually"
+                    FAILURES+=("install: just")
+                    return
+                }
+            elif command_exists pacman; then
+                sudo pacman -S --noconfirm just
+            else
+                warn "No supported package manager found. Install just manually."
+                FAILURES+=("install: just")
+            fi
+            ;;
+        bsd)
+            if command_exists pkg; then
+                sudo pkg install -y just
+            else
+                warn "pkg not found. Install just manually."
+                FAILURES+=("install: just")
+            fi
+            ;;
+    esac
+}
+
 # --- Clone or update repo ---
 
 setup_repo() {
@@ -180,14 +226,17 @@ main() {
         -h|--help) usage ;;
         --restow)
             install_stow
+            install_just
             stow_packages --restow
             ;;
         --adopt)
             install_stow
+            install_just
             stow_packages --adopt
             ;;
         --unstow)
             install_stow
+            install_just
             stow_packages --unstow
             info "All symlinks removed."
             report_failures
@@ -197,6 +246,7 @@ main() {
             FORCE=true
             install_age
             install_stow
+            install_just
             setup_repo
             decrypt_secrets
             stow_packages
@@ -208,6 +258,7 @@ main() {
         "")
             install_age
             install_stow
+            install_just
             setup_repo
             decrypt_secrets
             stow_packages

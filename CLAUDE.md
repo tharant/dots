@@ -21,6 +21,7 @@ dots/
 │   ├── bash/        # .bash_profile
 │   └── vim/         # .vimrc, .vim/
 ├── bsd/             # BSD-specific overrides (Stow packages)
+│   └── bash/        # .bash_profile
 ├── secrets/         # Encrypted files (*.age only, hybrid encrypted)
 │   ├── recipients.txt  # age public key(s) for encryption
 │   ├── ssh/         # Encrypted SSH private keys
@@ -32,6 +33,8 @@ dots/
 ├── docs/            # Reference documentation
 │   ├── bash-startup-order.md  # Bash startup file loading order
 │   └── stow-adopt-workflow.md # How to adopt existing configs with stow --adopt
+├── Justfile         # Task runner (just) for common operations
+├── .editorconfig    # Editor formatting settings
 └── .gitignore       # Blocks plaintext secret patterns
 ```
 
@@ -57,6 +60,30 @@ curl -fsSL https://raw.githubusercontent.com/USER/dots/main/scripts/setup.sh | b
 This installs age + GNU Stow, clones the repo to `~/.dots`, prompts for passphrase to decrypt secrets, and stows all configs. Platform is auto-detected via `uname -s`.
 
 ## Commands
+
+A `Justfile` provides the primary interface. Run `just` to see all recipes.
+
+```bash
+# Core operations
+just setup                    # Full bootstrap (install deps, clone, decrypt, stow)
+just restow                   # Re-stow all packages (after git pull)
+just adopt                    # Adopt existing files into repo, then stow
+just unstow                   # Remove all managed symlinks
+just verify                   # Run verification checks
+just encrypt <file>           # Hybrid-encrypt a file
+just decrypt                  # Decrypt all secrets
+
+# Dev
+just lint                     # Shellcheck all scripts and bash dotfiles
+just add-package <plat> <name>  # Scaffold a new stow package
+
+# Info
+just status                   # Quick symlink health check
+just list-packages            # List stow packages by platform
+just diff-secrets             # Compare encrypted vs decrypted timestamps
+```
+
+Scripts can also be called directly:
 
 ```bash
 ./scripts/setup.sh                              # Full bootstrap (or curl it)
