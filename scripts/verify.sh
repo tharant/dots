@@ -78,7 +78,9 @@ check_symlinks() {
             else
                 fail "$label/$pkg_name: ~/$rel missing"
             fi
-        done < <(find "$pkg_dir" -type f -print0)
+        # stow's default ignore set: these are never deployed, so skip them
+        done < <(find "$pkg_dir" -type f \
+            ! -name '*~' ! -name '#*#' ! -name '.git*' ! -name '.DS_Store' -print0)
     done
 }
 
@@ -113,10 +115,15 @@ fi
 
 SECRETS_DIR="$REPO_DIR/secrets"
 
-declare -A TARGET_MAP=(
-    ["ssh"]="$HOME/.ssh"
-    ["tokens"]="$HOME/.config/tokens"
-)
+# Target mapping (case-based: no declare -A, keeps this script runnable under
+# the bash 3.2 that a fresh macOS curl|bash bootstrap starts with).
+target_dir_for() {
+    case "$1" in
+        ssh)    echo "$HOME/.ssh" ;;
+        tokens) echo "$HOME/.config/tokens" ;;
+        *)      echo "" ;;
+    esac
+}
 
 section "Decrypted secrets"
 found_secrets=0
@@ -127,7 +134,7 @@ while IFS= read -r -d '' age_file; do
     filename="${rel_path#*/}"
     filename="${filename%.age}"
 
-    target_dir="${TARGET_MAP[$subdir]:-}"
+    target_dir="$(target_dir_for "$subdir")"
     if [[ -z "$target_dir" ]]; then
         fail "No target mapping for $rel_path"
         continue
