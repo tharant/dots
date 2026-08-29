@@ -89,6 +89,8 @@ agreement with the code they document:
 | [dots-encrypt(1)](docs/dots-encrypt.md) | `scripts/encrypt.sh` — write the dual age artifacts |
 | [dots-decrypt(1)](docs/dots-decrypt.md) | `scripts/decrypt.sh` — materialize secrets locally |
 | [dots-verify(1)](docs/dots-verify.md) | `scripts/verify.sh` — symlink + permissions health check |
+| [loadavg(1)](docs/loadavg.md) | `~/bin/loadavg` — status-bar load shim (`common/bin`) |
+| [tmux-copy(1)](docs/tmux-copy.md) | `~/bin/tmux-copy` — clipboard ladder + OSC 52 (`common/bin`) |
 
 Install them as real manpages (see [docs/man/Makefile](docs/man/Makefile)):
 

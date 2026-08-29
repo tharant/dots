@@ -1,0 +1,42 @@
+.TH LOADAVG 1 "2026-08-29" "dots" "User Commands"
+.SH NAME
+loadavg \- one-line load average for the tmux status bar
+.SH SYNOPSIS
+.B loadavg
+.SH DESCRIPTION
+Prints the 1, 5 and 15-minute load averages on a single line,
+space-separated, with no decoration. It exists for
+.BR tmux (1)'s
+status bar: the status segment in
+.I .tmux.conf
+invokes it as
+.I "#($HOME/bin/loadavg)"
+and supplies all color, spacing and labels itself, while this script
+supplies only the three numbers.
+.PP
+It takes no options and reads no input; a status-line refresh simply runs it
+once per interval.
+.SH FILES
+.TP
+.I /proc/loadavg
+Primary source on Linux, including WSL2 and OrbStack: the first three
+fields are printed verbatim.
+.TP
+.I "sysctl -n vm.loadavg"
+Used everywhere else (macOS, FreeBSD). Darwin and BSD wrap the value in
+braces (like
+.IR "( 1.00 0.50 0.25 )")
+so the awk program prints fields 2 through 4.
+.SH EXIT STATUS
+0 on success. Any shell error (missing
+.BR awk ,
+neither
+.I /proc/loadavg
+nor
+.BR sysctl (8)
+available) leaves the status segment empty for that refresh; with
+.I set -u
+in effect an unexpected unset variable aborts with status 2.
+.SH SEE ALSO
+.BR tmux\-copy (1),
+.BR dots\-setup (1)

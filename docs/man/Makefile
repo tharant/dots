@@ -14,7 +14,7 @@
 # On macOS, mandoc(1) is the system roff renderer; groff is not required.
 
 MANDIR ?= $(HOME)/.local/share/man/man1
-PAGES := $(wildcard dots-*.1)
+PAGES := $(wildcard *.1)
 
 .PHONY: all check install uninstall
 
