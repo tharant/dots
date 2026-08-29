@@ -62,19 +62,24 @@ Runs when a login shell exits. Optional; used for cleanup tasks like clearing te
 
 ## Rules to Prevent Conflicts
 
-1. **Never duplicate code between `.bash_profile` and `.bashrc`.** Source one from the other.
-2. **`export` statements go in `.bash_profile`** — set once per login session.
-3. **Aliases, functions, prompt go in `.bashrc`** — needed in every interactive shell.
-4. **Platform-specific configs go in platform dirs** (`macos/bash/`, `linux/bash/`, `bsd/bash/`), not as `if/else` blocks in common configs.
-5. **Guard `.bashrc` with `[[ $- == *i* ]]`** to skip expensive operations when sourced in non-interactive contexts.
+1. **Never duplicate code between `.bash_profile` and `.bashrc`.** Source one from the other (the platform `.bash_profile` files are 5-line `source ~/.bashrc` shims).
+2. **`export` statements go in the platform `.bashrc.platform.d/<name>.sh` files** — they load in every interactive shell, login or not, so exports set there are always present.
+3. **Aliases, functions, prompt go in `.bashrc`** (and `common/bash/.bash_*`) — needed in every interactive shell.
+4. **Platform-specific configs go in platform dirs** (`macos/bash/`, `linux/bash/`, `alpine/bash/`, `wsl/bash/`, `bsd/bash/`), each shipping `bash/.bashrc.platform.d/<name>.sh` — not as `if/else` blocks in common configs.
+5. **Guard `.bashrc` with `[[ $- == *i* ]]`** to skip expensive operations when sourced in non-interactive contexts. Platform files load right after this guard.
 
 ## How This Maps to the Repo
 
 ```
-common/bash/.bash_profile   →  ~/.bash_profile   (symlink via Stow)
-common/bash/.bashrc          →  ~/.bashrc
-common/bash/.bash_aliases    →  ~/.bash_aliases
-common/bash/.bash_logout     →  ~/.bash_logout
-macos/bash/.bashrc_local     →  ~/.bashrc_local   (platform overrides, sourced from .bashrc)
-linux/bash/.bashrc_local     →  ~/.bashrc_local
+common/bash/.bash_profile          →  ~/.bash_profile   (symlink via Stow)
+common/bash/.bashrc                →  ~/.bashrc
+common/bash/.bash_aliases           →  ~/.bash_aliases
+common/bash/.bash_logout            →  ~/.bash_logout
+macos/bash/.bashrc.platform.d/macos.sh  →  ~/.bashrc.platform.d/macos.sh
+linux/bash/.bashrc.platform.d/linux.sh  →  ~/.bashrc.platform.d/linux.sh
+alpine/bash/.bashrc.platform.d/alpine.sh →  ~/.bashrc.platform.d/alpine.sh
+wsl/bash/.bashrc.platform.d/wsl.sh      →  ~/.bashrc.platform.d/wsl.sh
+bsd/bash/.bashrc.platform.d/bsd.sh      →  ~/.bashrc.platform.d/bsd.sh
 ```
+
+`.bashrc` sources every file in `~/.bashrc.platform.d/` (alphabetical order), so layers compose — a WSL2-Alpine distro gets both `alpine.sh` and `wsl.sh`. setup.sh decides which platform packages to stow: `common` + `macos|linux|bsd`, plus `alpine` when `/etc/os-release` says Alpine, plus `wsl` when WSL is detected.
