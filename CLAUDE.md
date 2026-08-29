@@ -14,7 +14,8 @@ Central dotfiles repository for bash across macOS, Debian flavors, Alpine, WSL2,
 dots/
 ├── common/          # Shared configs across all platforms (GNU Stow packages)
 │   ├── bash/        # .bashrc (with .bashrc.platform.d hook), aliases, functions, ...
-│   ├── bin/         # ~/bin shims: loadavg, tmux-copy (portable, one file for all)
+│   ├── bin/         # ~/bin shims: loadavg(1), tmux-copy(1) (portable, one
+│   │                #   file for all; documented in docs/)
 │   ├── git/         # .gitconfig, .gitignore_global
 │   ├── nvim/        # .config/nvim/init.lua (clipboard-guarded)
 │   ├── ssh/         # ssh config (portable; UseKeychain behind IgnoreUnknown)
@@ -36,9 +37,10 @@ dots/
 │   ├── verify.sh    # Symlink + permissions health check (stow-ignore aware)
 │   ├── encrypt.sh   # Encrypt a file (age key + passphrase copies)
 │   └── decrypt.sh   # Decrypt secrets (age key if present, else passphrase)
-├── docs/            # Reference docs: per-script manpage mirrors (dots-*.md),
-│   │                #   platform notes; roff sources in docs/man/ + Makefile
-│   │                #   (just man-check / man-install)
+├── docs/            # Reference docs: per-script manpage mirrors (dots-*.md,
+│   │                #   loadavg.md, tmux-copy.md), platform notes; roff
+│   │                #   sources in docs/man/ + Makefile (just man-check /
+│   │                #   man-install)
 ├── Justfile         # Task runner (just) for common operations
 ├── .editorconfig    # Editor formatting settings
 └── .gitignore       # Blocks plaintext secret patterns (id_* etc.)
@@ -109,6 +111,28 @@ just status                   # Quick symlink health check
 just list-packages            # List stow packages by platform
 just diff-secrets             # Compare encrypted vs decrypted timestamps
 ```
+
+### Script documentation contract
+
+Every script this repo ships must be fully documented, in two formats kept in
+agreement with the code:
+
+- **Roff manpage** at `docs/man/<name>.1` (man(7) macros, `mandoc -T lint`
+  clean; pipeline scripts use the `dots-` prefix, bin shims use their command
+  name).
+- **Markdown mirror** at `docs/<name>.md` — same sections as the manpage
+  (Name, Synopsis, Description, Options/Environment, Exit status, Files)
+  plus **Intended usage** (where the script fits in the workflow, when to
+  reach for it) and **Examples**; cross-links to related pages with working
+  relative paths.
+
+When you add or change a script: update code, comment, manpage, and markdown
+in the same change; every documented flag, env var, exit path, file path and
+message must match the implementation; run `just man-check` (mandoc lint
+over all pages) and fix any doc drift. The [README](README.md)
+Documentation table must list every page/script pair. Currently documented:
+`dots-setup`, `dots-encrypt`, `dots-decrypt`, `dots-verify`, `loadavg`,
+`tmux-copy`.
 
 Scripts can also be called directly:
 

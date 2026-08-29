@@ -1,0 +1,85 @@
+.TH TMUX-COPY 1 "2026-08-29" "dots" "User Commands"
+.SH NAME
+tmux-copy \- copy stdin to the best available clipboard
+.SH SYNOPSIS
+.B command
+.B |
+.B tmux-copy
+.SH DESCRIPTION
+Reads all of stdin and hands it to the first working clipboard mechanism.
+The detection order is:
+.TP
+.B pbcopy
+macOS.
+.TP
+.B clip.exe
+WSL2. Run by its absolute path
+.RI ( /mnt/c/Windows/System32/clip.exe )
+and only when
+.I /proc/version
+says this really is a Microsoft-hosted kernel \(em a cross-mounted
+.I /mnt/c
+on a bare-metal Linux box does not count.
+.TP
+.B wl-copy
+Wayland sessions.
+.TP
+.B xclip
+X11 sessions, writing to the CLIPBOARD selection.
+.PP
+Detection is by capability, not by platform: each candidate is checked with
+.BR command \-v (or
+its absolute path for
+.BR clip.exe )
+so a single unmodified copy of the script works on macOS, Linux, WSL2 and
+SSH hosts alike. A candidate that fails (exit status non-zero) is skipped and
+the next one is tried.
+.TP
+.B "No clipboard at all: OSC 52"
+When no clipboard binary is present, the data is base64-encoded (busybox
+compatible
+.BR base64 )
+and emitted as an OSC 52 escape sequence with the
+.B c
+clipboard selector and a BEL terminator. Capable terminals receive the copy
+even over ssh; in tmux this requires
+.B set-clipboard external
+and
+.BR "allow-passthrough on" ,
+which
+.I .tmux.conf
+sets.
+.PP
+The script does not capture the clipboard helpers' output; they are standard
+clipboard tools that are silent on success, and success is judged by their
+exit status.
+.PP
+Empty input skips every candidate (all of them are guarded by a non-empty
+check) and falls through to the OSC 52 emission, which then transmits an
+empty payload.
+.SH USAGE
+.B .tmux.conf
+binds the copy-mode yank and Enter keys to
+.B copy-pipe-and-cancel
+with
+.B tmux-copy
+as the pipe command, so every yank lands in the native clipboard of the
+terminal client machine, whatever it runs.
+.SH EXAMPLES
+Copy the current tmux selection (the normal path, nothing to type), or
+manually from a shell:
+.PP
+.nf
+    $ printf 'hello clipboard' | tmux-copy
+    $ tail -n 100 /var/log/system.log | tmux-copy
+.fi
+.SH EXIT STATUS
+0 in practice: every code path ends successfully because OSC 52 emission,
+the final fallback, is a plain
+.B printf
+that always succeeds, even with no clipboard tool present. A failing
+clipboard candidate never aborts the script; its non-zero status merely
+triggers the next candidate in line.
+.SH SEE ALSO
+.BR loadavg (1),
+.BR dots\-setup (1)
