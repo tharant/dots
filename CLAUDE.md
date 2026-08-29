@@ -14,8 +14,10 @@ Central dotfiles repository for bash across macOS, Debian flavors, Alpine, WSL2,
 dots/
 ├── common/          # Shared configs across all platforms (GNU Stow packages)
 │   ├── bash/        # .bashrc (with .bashrc.platform.d hook), aliases, functions, ...
-│   ├── bin/         # ~/bin shims: loadavg(1), tmux-copy(1) (portable, one
-│   │                #   file for all; documented in docs/)
+│   ├── bin/         # ~/bin shims: loadavg(1), tmux-copy(1), runtimes(1)
+│   │                #   (portable, one file for all; documented in docs/)
+│   ├── direnv/      # .config/direnv (direnvrc use_* helpers, direnv.toml),
+│   │                #   ~/.envrc tree-root starter
 │   ├── git/         # .gitconfig, .gitignore_global
 │   ├── nvim/        # .config/nvim/init.lua (clipboard-guarded)
 │   ├── ssh/         # ssh config (portable; UseKeychain behind IgnoreUnknown)
@@ -31,6 +33,8 @@ dots/
 │   ├── recipients.txt  # age public key(s) for encryption (public, safe to commit)
 │   ├── ssh/         # Encrypted SSH private keys
 │   └── tokens/      # Encrypted API tokens, credentials
+├── templates/       # use_template scaffolding trees + manifests (repo root,
+│                    #   not stowed)
 ├── scripts/
 │   ├── setup.sh     # Bootstrap (curl-able): pkg_install dispatcher, platform/distro/env
 │   │                #   detection (macos/linux/bsd + alpine + wsl layers), decrypt, stow
@@ -132,7 +136,8 @@ message must match the implementation; run `just man-check` (mandoc lint
 over all pages) and fix any doc drift. The [README](README.md)
 Documentation table must list every page/script pair. Currently documented:
 `dots-setup`, `dots-encrypt`, `dots-decrypt`, `dots-verify`, `loadavg`,
-`tmux-copy`.
+`tmux-copy`, `runtimes` (the direnv feature guide, `docs/direnv-runtimes.md`,
+accompanies it).
 
 Scripts can also be called directly:
 

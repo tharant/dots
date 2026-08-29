@@ -1,0 +1,323 @@
+.TH RUNTIMES 1 "2026-08-29" "dots" "User Commands"
+.SH NAME
+runtimes \- manage project runtimes declared in .runtimesrc
+.SH SYNOPSIS
+.B runtimes
+.RI < command " [" args ]
+.SH DESCRIPTION
+.B runtimes
+is the CLI half of the direnv integration: it reads a project's
+.IR .runtimesrc ,
+resolves each declared runtime through its backend, and records the
+concrete result in the project's
+.IR .runtimes.lock .
+It is deployed as
+.I ~/bin/runtimes
+by
+.BR dots\-setup (1)
+from
+.IR common/bin/bin/runtimes ;
+the direnv half is documented in
+.IR docs/direnv\-runtimes.md .
+.PP
+Three backends, one resolution rule each:
+.TP
+.B python \(-> uv
+Any uv-resolvable spec
+.RI ( 3.12 ,
+.RI 3.12.7 ),
+installed via
+.BR "uv python install" .
+.TP
+.B node \(-> fnm
+A major
+.RI ( 22 )
+resolves to the latest
+.B vX.Y.Z
+via
+.B fnm ls\-remote
+at install time; a concrete
+.B vX.Y.Z
+(or
+.BR X.Y.Z )
+is used verbatim.
+.TP
+.B java \(-> sdkman
+A major
+.RI ( 17 )
+resolves to the latest
+.B <major>.x.y\-tem
+via the sdkman version API \(em
+.B sdk list
+is never used because it forces a pager; an exact candidate ID
+.RI ( 21.0.12+1.1\-tem )
+is used verbatim.
+.PP
+.B ensure
+is the direnv hot path: it only reads local files, so a satisfied project is
+a milliseconds-fast no-op. Anything missing or changed kicks off a detached
+install
+.RB ( "nohup \(ha " " &" )
+whose output goes to a per-project log, so
+.I .envrc
+evaluation never blocks on the network. A pid guard under
+.I ~/.local/state/runtimes/pids
+makes installs single-flight: while one runs, further
+.B ensure
+calls print one status line and exit 0. When the install finishes it writes
+.I .runtimes.lock
+atomically (temp file + rename), so a project never sees a half-applied
+environment.
+.PP
+stdout is reserved for
+.B path
+output (machine-consumed by the direnv helpers); every human-facing message
+goes to stderr.
+.SS "The lock file"
+.I .runtimes.lock
+holds one line per runtime, recording the resolved version and the absolute
+store path:
+.PP
+.RS
+.nf
+python 3.12 3.12.12 ~/.local/share/uv/python/cpython\-3.12.12\-macos\-x86_64\-none
+node 22 22.21.1 ~/.local/share/fnm/node\-versions/v22.21.1/installation
+java 17 17.0.20\-tem ~/.sdkman/candidates/java/17.0.20\-tem
+.fi
+.RE
+.PP
+The lock is written only when every entry in
+.I .runtimesrc
+is satisfied \(em a failed line leaves the old lock in place (and the
+detached worker reports
+.BR "install incomplete \(ha \(em lock not written" )
+so the next
+.B cd
+retries the whole install.
+.I .envrc
+evaluation reads the lock, never the network and never resolution logic.
+.SS Commands
+.TP
+.BI "ensure " [ dir ]
+Satisfy every runtime in
+.IR <dir>/.runtimesrc
+(default: the current directory, also the fallback for a relative
+.IR dir ).
+Exits 0 immediately when there is no
+.IR .runtimesrc ,
+when the lock already covers every entry with a live store path, when an
+install is in flight
+.RB ( "install still in progress (\(ha); log: \(ha" ),
+or after kicking off a new detached install
+.RB ( "installing python 3.12, node 22 (log: \(ha)" ).
+On BSD, prints
+.BR "runtime auto\-install unsupported on BSD; falling back to system runtimes" ,
+checks
+.BR "command \-v"
+per name, and exits 0.
+.TP
+.BI "install " "<name> <version>"
+Foreground install of one runtime with visible progress; the same
+resolution and atomicity rules as
+.BR ensure ,
+but it fails (exit 1) instead of degrading. Refused outright on BSD.
+.TP
+.B status
+List installed runtimes per backend
+.RB ( "uv python list \-\-only\-installed" ,
+fnm
+.IR node\-versions/ ,
+sdkman candidates except
+.BR current )
+plus the store and state paths, and the project
+.I .runtimesrc
+and
+.I .runtimes.lock
+when the current directory has one.
+.TP
+.BI "path " "<name> <spec> [ dir ]"
+Print the runtime's bin dir (python, node) or
+.B JAVA_HOME
+(java) from
+.IR <dir>/.runtimes.lock
+(default: the current directory); this is what the direnv helpers consume.
+Exit 1 when the lock has no matching entry
+.RB ( "<name> <spec> not satisfied in <dir>" )
+or when the entry points at a path that no longer exists.
+.TP
+.BI "template " "<name> [\-\-force] [ dest ]"
+Expand the repo template
+.I templates/<name>
+into
+.I dest
+(default: the current directory).
+.B {{VAR}}
+tokens in file contents are substituted from the environment variables listed
+in the manifest's
+.B substitute=
+line (unset vars are left in place with a warning). Existing files are never
+overwritten unless
+.B \-\-force
+.RB ( "refusing to overwrite:\(ha" ).
+Manifest files matched by
+.B ignore=
+globs are skipped. Everything is staged first and moved per file, so the
+destination only ever gains whole files.
+.SS "Platform support"
+.TP
+.B Full
+macOS (x86_64, aarch64), Debian/Ubuntu, Alpine x86_64, WSL2
+(Debian/Alpine x86_64): direnv, uv, fnm and sdkman are installed by
+.BR dots\-setup (1);
+all three backends auto-install.
+.TP
+.B Partial
+Alpine/WSL aarch64 (musl): python and java auto-install as usual; node has no
+arm64-musl build \(em the install dies with
+.BR "no musl node build for <arch>: unofficial\-builds ships x64\-musl only" .
+Alpine x86_64 node comes from the unofficial-builds mirror via
+.B FNM_NODE_DIST_MIRROR
+and
+.BR "FNM_ARCH=x64\-musl" .
+.TP
+.B "Dotfiles only"
+FreeBSD and other
+.B *BSD
+names: configs (including the direnv package) deploy, but runtime
+auto-install is unsupported:
+.B ensure
+degrades to system runtimes via
+.B "command \-v"
+and exits 0;
+.B install
+refuses with an error.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Print usage to stderr and exit 0 (bare
+.B runtimes
+does the same).
+.TP
+.B \-\-force
+With
+.B template
+only: overwrite existing files at the destination.
+.SH ENVIRONMENT
+.TP
+.B HOME
+Base for every default store, the state dir and
+.IR ~/bin/runtimes .
+.TP
+.B FNM_DIR
+fnm store; defaults to
+.IR ~/.local/share/fnm .
+Node installs land in
+.IR $FNM_DIR/node\-versions/vX.Y.Z/installation .
+.TP
+.B UV_PYTHON_INSTALL_DIR
+uv's python store; defaults to
+.IR ~/.local/share/uv/python .
+Honored by uv itself during installs; shown by
+.BR status .
+.TP
+.B SDKMAN_DIR
+sdkman root; defaults to
+.IR ~/.sdkman .
+Java candidates live in
+.IR $SDKMAN_DIR/candidates/java/<id> .
+.SH EXIT STATUS
+.TP
+.B 0
+Success, or a path designed not to fail evaluation:
+.B ensure
+kicked off (or found running) a detached install;
+.B ensure
+on BSD fell back to system runtimes;
+.B \-\-help
+was printed.
+.TP
+.B 1
+An error: unknown command, wrong argument count, no such directory, unknown
+runtime name (supported: python, node, java), a backend failure
+.RB ( uv ,
+.BR fnm ,
+or sdkman missing; no release matching the spec),
+.B path
+on an unsatisfied runtime, or a template refusing to overwrite. A detached
+worker whose install was incomplete also exits 1 \(em after writing no lock.
+.SH FILES
+.TP
+.I .runtimesrc
+Per-project runtime declarations, one
+.RI < name " " < spec >
+per line;
+.B #
+starts a comment.
+.TP
+.I .runtimes.lock
+Per-project resolved versions and store paths, written by
+.BR ensure 's
+detached worker.
+.TP
+.I ~/.local/state/runtimes/logs/<hash>.log
+Output of the detached install for a project.
+.I <hash>
+is a hash of the project directory path
+.RB ( sha256sum ,
+.RB "shasum \-a 256" ,
+or
+.BR cksum ,
+whichever exists).
+.TP
+.I ~/.local/state/runtimes/pids/<hash>.pid
+Single-flight guard for the detached install; a marker whose pid is dead is
+reclaimed.
+.TP
+.IR ~/.local/share/uv/python ", " $FNM_DIR/node\-versions ", " $SDKMAN_DIR/candidates/java
+The per-backend stores.
+.TP
+.IR templates/<name>/ ", " templates/<name>.template
+In the repo (not stowed): the template tree and its manifest
+.RB ( description= ,
+.RB substitute= ,
+.BR ignore= ).
+Located relative to the repo root, derived from the script's own location so
+the stowed symlink resolves into the clone.
+.SH EXAMPLES
+Declare a project's runtimes and let direnv drive the CLI:
+.PP
+.RS
+.nf
+\&$ cd ~/code/foo
+\&$ printf 'python 3.12\ennode 22\en' > .runtimesrc
+\&$ runtimes ensure
+==> runtimes: installing python 3.12, node 22 (log: \(ha)
+\&$ runtimes ensure
+==> runtimes: install still in progress (python 3.12, node 22); log: \(ha
+.fi
+.RE
+.PP
+Inspect the stores and the current project through
+.BR just (1):
+.PP
+.RS
+.nf
+just runtimes status
+.fi
+.RE
+.PP
+Consume a locked runtime the way the direnv helpers do (stdout only):
+.PP
+.RS
+.nf
+\&$ runtimes path python 3.12
+/Users/you/.local/share/uv/python/cpython\-3.12.12\-macos\-aarch64\-none/bin
+\&$ runtimes path java 17
+/Users/you/.sdkman/candidates/java/17.0.20\-tem
+.fi
+.RE
+.SH SEE ALSO
+.IR docs/direnv\-runtimes.md ,
+.BR dots\-setup (1),
+.BR loadavg (1),
+.BR tmux\-copy (1)

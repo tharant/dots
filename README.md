@@ -42,7 +42,8 @@ Detection: `uname -s` (platform), `/etc/os-release` (distro), `/proc/version` + 
 dots/
 ├── common/            # Cross-platform configs (Stow packages)
 │   ├── bash/          # .bashrc, .bash_aliases, .bash_functions, ...
-│   ├── bin/           # ~/bin shims: loadavg, tmux-copy (capability-detecting)
+│   ├── bin/           # ~/bin shims: loadavg, tmux-copy, runtimes (capability-detecting)
+│   ├── direnv/        # .config/direnv (direnvrc use_* helpers, direnv.toml), ~/.envrc starter
 │   ├── git/           # .gitconfig, .gitignore_global
 │   ├── nvim/          # .config/nvim/init.lua (coc.nvim, clipboard-guarded)
 │   ├── ssh/           # SSH config (public parts)
@@ -55,7 +56,8 @@ dots/
 ├── wsl/               # WSL2 overrides   → .bashrc.platform.d/wsl.sh
 ├── bsd/               # BSD overrides    → .bashrc.platform.d/bsd.sh
 ├── secrets/           # Encrypted files (dual artifacts: *.age + *.phrase.age)
-└── scripts/           # setup.sh, encrypt.sh, decrypt.sh, verify.sh
+├── scripts/           # setup.sh, encrypt.sh, decrypt.sh, verify.sh
+└── templates/         # use_template scaffolding trees + manifests (repo root, not stowed)
 ```
 
 Each subdirectory inside `common/` and the platform dirs is a Stow package. Files mirror `$HOME` — e.g., `common/bash/.bashrc` becomes `~/.bashrc`.
@@ -78,6 +80,10 @@ Platform overrides must **not** be conditionals in `common/`. Instead, each plat
 
 The same operations are available through `just` (`just setup`, `just restow`, `just verify`, `just encrypt <file>`, `just lint`, …) — run `just` for the full list.
 
+### Per-directory environments + managed runtimes
+
+[direnv](https://direnv.net/) applies folder-level env vars on `cd`, and `.envrc`s stack up the tree (`source_up_if_exists`; nearest wins, parent values persist). Projects pin runtimes in `.runtimesrc` (`python 3.12`, `node 22`, `java 17`); the first `cd` after `direnv allow` installs them detached through the [`runtimes`](docs/dots-runtimes.md) shim (python via uv, node via fnm, java via sdkman) and the next prompt activates them — including a project-local `.venv`. Authoring is documented in the [direnv + runtimes guide](docs/direnv-runtimes.md).
+
 ## Documentation
 
 Each script has a full manual — rendered (roff) and source (markdown), kept in
@@ -91,6 +97,7 @@ agreement with the code they document:
 | [dots-verify(1)](docs/dots-verify.md) | `scripts/verify.sh` — symlink + permissions health check |
 | [loadavg(1)](docs/loadavg.md) | `~/bin/loadavg` — status-bar load shim (`common/bin`) |
 | [tmux-copy(1)](docs/tmux-copy.md) | `~/bin/tmux-copy` — clipboard ladder + OSC 52 (`common/bin`) |
+| [runtimes(1)](docs/dots-runtimes.md) | `~/bin/runtimes` — managed runtimes CLI: uv/fnm/sdkman (`common/bin`) |
 
 Install them as real manpages (see [docs/man/Makefile](docs/man/Makefile)):
 
@@ -99,7 +106,7 @@ just man-install     # symlinks docs/man/*.1 into ~/.local/share/man/man1
 just man-check       # mandoc -T lint on all pages
 ```
 
-Other reference docs live alongside: [bash startup order](docs/bash-startup-order.md), [stow adopt workflow](docs/stow-adopt-workflow.md).
+Other reference docs live alongside: [bash startup order](docs/bash-startup-order.md), [stow adopt workflow](docs/stow-adopt-workflow.md), [direnv + runtimes guide](docs/direnv-runtimes.md).
 
 ## Secrets
 
