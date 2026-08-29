@@ -37,3 +37,11 @@ export NVM_DIR="$HOME/.nvm"
 # Optional tools (guarded)
 command -v kubectl &>/dev/null && source <(kubectl completion bash)
 command -v direnv &>/dev/null && eval "$(direnv hook bash)"
+command -v aws_completer &>/dev/null && complete -C aws_completer aws
+
+# Trueline prompt (requires bash >= 4.2)
+[[ -f ~/.local/trueline/.trueline.conf ]] && source ~/.local/trueline/.trueline.conf
+
+#THIS MUST BE AT THE END OF THE FILE FOR SDKMAN TO WORK!!!
+export SDKMAN_DIR="$HOME/.sdkman"
+[[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ]] && source "$SDKMAN_DIR/bin/sdkman-init.sh"
