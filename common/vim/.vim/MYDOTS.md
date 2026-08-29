@@ -4,6 +4,15 @@ Everything about this setup lives in `~/.vimrc` (the only main config — vim
 reads that file, not `~/.vim/init.vim`) and `~/.vim/` (plugins). This document
 explains what's active, how it works, and how to use it.
 
+## Requirements
+
+- **coc.nvim** needs `node` >= 22.15 on your PATH, plus Neovim >= 0.8 or Vim
+  >= 9.0.0438. On old distros (e.g. Debian bookworm ships Vim 9.0 and Node 18)
+  use Neovim from upstream so coc still works — or skip coc entirely.
+- A clipboard helper (`pbcopy`, `wl-copy`, `xclip`, `win32yank.exe` or
+  `clip.exe`) for `\y` and for the `clipboard=unnamedplus` shortcut. Without
+  one vim just keeps its internal clipboard — no errors, no maps bound.
+
 ## Keybindings — what's been changed from shipped defaults
 
 Leader is the default `\`.
@@ -16,7 +25,7 @@ Leader is the default `\`.
 | `Q` | Reflow text (`gq`) | Freed from Ex mode, which is basically useless |
 | `p` (visual mode) | Replace selection with last-pasted text without clobbering the paste register | Lets you paste over multiple things in a row |
 | `w!!` (command mode) | Save file with sudo | "forgot to open vim with sudo" rescue |
-| `\y` | Send last-yanked text to Clipper (`nc localhost 8377`) | Cross-machine clipboard sharing; requires Clipper running |
+| `\y` | Copy last-yanked text to the system clipboard | Uses whichever helper is found (`pbcopy`, `wl-copy`, `xclip`, `win32yank.exe`, `clip.exe`); only bound if one exists |
 
 ### coc.nvim (code intelligence)
 
@@ -46,7 +55,7 @@ you don't get with the plugin alone:
 | `\tc` | vim-code-dark |
 
 Every switch applies the colorscheme **and** the matching
-[vim-airline](#active-plugins-bundle) statusline theme, and echoes a
+[vim-airline](#active-plugins-vimplugged) statusline theme, and echoes a
 confirmation. An unknown name (e.g. `:DotTheme bogus`) prints the available
 options and leaves the theme untouched.
 
@@ -61,9 +70,10 @@ Two colorschemes are installed:
 
 - The chosen theme is written to `~/.vim/.theme` (plain text, one line) and
   re-applied at startup. If that file is missing or has an unrecognized value,
-  it defaults to `gruvbox`.
-- The block in `~/.vimrc` right after `set t_Co=256` defines `s:themes` (theme
-  → colorscheme/airline names), `s:LoadTheme()` (reads the restored name),
+  it defaults to `gruvbox`. (The file is generated on first use — the repo
+  doesn't ship one.)
+- The block in `~/.vimrc` right after the true-color setup defines `s:themes`
+  (theme → colorscheme/airline names), `s:LoadTheme()` (reads the restored name),
   `s:SetTheme()` (validates, sets `g:airline_theme`, enables
   `g:gruvbox_italic`, runs `:colorscheme`, persists), the `:DotTheme` command
   with completion, the `\tg` / `\tc` maps, and the startup `call
@@ -75,14 +85,20 @@ Two colorschemes are installed:
   `call s:SetTheme(s:LoadTheme())` with e.g. `colorscheme xoria256`
   (still present in `~/.vim/colors/`).
 
-## Plugin manager: Pathogen
+## Plugin manager: vim-plug
 
-- `~/.vim/autoload/pathogen.vim` — the manager (activated by
-  `call pathogen#infect()` at the top of `~/.vimrc`).
-- `~/.vim/bundle/` — every directory here is automatically loaded as a plugin.
-  Add a plugin by cloning it there; remove it by deleting the directory.
+- `~/.vim/autoload/plug.vim` — the manager (vendored single file, activated by
+  `call plug#begin('~/.vim/plugged')` in `~/.vimrc`).
+- `~/.vim/plugged/` — where plugins land; not tracked in the repo, it fills
+  in on first launch. Add a plugin by adding a `Plug 'author/name'` line
+  between `plug#begin` and `plug#end`, then `:PlugInstall`. Remove a plugin by
+  deleting its line and running `:PlugClean`.
+- Versions float: each `Plug` line tracks the plugin's default branch (coc is
+  pinned to its `release` branch). There are no checked-in plugin copies.
+- Missing plugins are installed automatically on first launch
+  (`PlugInstall --sync` runs once, then the config re-sources itself).
 
-## Active plugins (`~/.vim/bundle/`)
+## Active plugins (`~/.vim/plugged/`)
 
 | Plugin | What it does | How to use |
 |--------|--------------|------------|
@@ -99,10 +115,12 @@ Two colorschemes are installed:
 ## coc.nvim notes
 
 - Configured in `~/.vimrc` to install `coc-json`, `coc-tsserver`, `coc-pyright`
-  automatically (already done on 2026-08-28; they live in
-  `~/.config/coc/extensions/`). Add more by appending to
+  automatically. Add more by appending to
   `g:coc_global_extensions` in `~/.vimrc` or with `:CocInstall <ext>`.
-- Requires `node` on your PATH (managed by nvm here).
+- Requires `node` >= 22.15 on your PATH (see Requirements above); the plugin
+  itself needs Neovim >= 0.8 or Vim >= 9.0.0438. On distros too old for either
+  (e.g. Debian bookworm, which ships Vim 9.0 / Node 18), install Neovim from
+  upstream and use this same setup there.
 - Management: `:CocInfo`, `:CocList extensions`, `:CocCommand <name>`.
 
 ## Other `~/.vimrc` settings worth knowing
@@ -111,15 +129,20 @@ Two colorschemes are installed:
 - **Numbers**: hybrid — absolute current line, relative everywhere else.
 - **Search**: incremental + highlighted (`hlsearch`).
 - **Backspace**: works over indent, EOL, insert-start like everywhere else.
-- **clipper**: `\y` sends yanks to `localhost:8377` (see keybinding table).
+- **Colors**: true color (`termguicolors`) when `$COLORTERM` says so (or you're
+  on kitty/alacritty), 256 colors otherwise; airline follows either way.
+- **Clipboard**: `clipboard=unnamedplus` when a clipboard helper is found (so
+  yanks go straight to the system clipboard); `\y` re-sends the last yank (see
+  keybinding table).
 
 ## Files in `~/.vim` and `~`
 
 ```
 ~/.vimrc            main config (the ONLY vim config; edit this one)
 ~/.vim/.theme       persisted theme choice, one line: gruvbox | codedark
-~/.vim/autoload/pathogen.vim    plugin manager
-~/.vim/bundle/      all installed plugins (add/remove to change your setup)
+                    (generated by the theme switcher, not tracked)
+~/.vim/autoload/plug.vim      plugin manager (vendored vim-plug)
+~/.vim/plugged/     installed plugins (generated on first launch)
 ~/.vim/colors/xoria256.vim   old default colorscheme, kept as a fallback
 ~/.vim/.netrwhist   vim's netrw history (auto-generated, regenerates itself)
 ~/.vim/MYDOTS.md    this file
@@ -133,7 +156,8 @@ useful:
 - `~/.vim/init.vim` — stale duplicate of the config that nothing sourced.
 - `~/.vim/autoload/plug.vim` + `~/.vim/plugged/` (vim-plug dup of vim-scala) —
   inert leftovers; nothing called `plug#begin()` and pathogen never scans
-  `plugged/`.
+  `plugged/`. (Superseded later the same day — vim-plug is the real manager
+  now, see below.)
 - `~/.vim/bundle/neocomplete.vim` — obsolete completion engine, superseded by
   coc.nvim (and wasn't even enabled; its startup flag was never set).
 - `~/.vim/plugin/` — empty directory.
@@ -144,3 +168,10 @@ useful:
   meant `<Tab>`, `<CR>`, and the `CursorHold` reference-highlighting autocmd
   all threw errors on every use. Installed (release branch), and the three LSP
   extensions initialized.
+- **Pathogen → vim-plug (2026-08-28)** — the whole `~/.vim/bundle/` tree of
+  vendored clones went away in favor of the manager: `plug.vim` is now the
+  single vendored file in `~/.vim/autoload/`, and plugins install into
+  `~/.vim/plugged/` on first launch. `~/.vim/.theme` is untracked too — the
+  theme switcher writes it whenever you run `\tg` / `\tc`, and you get gruvbox
+  until then. coc.nvim's node requirement (>= 22.15) is why the requirement
+  note above exists.
