@@ -14,6 +14,14 @@ indent_size = 4
 indent_style = space
 indent_size = 4
 
+[common/bin/bin/*]
+indent_style = space
+indent_size = 4
+
+[common/direnv/.config/direnv/*]
+indent_style = space
+indent_size = 4
+
 [*.md]
 trim_trailing_whitespace = false
 

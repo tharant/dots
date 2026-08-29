@@ -51,9 +51,15 @@ man-install:
 man-uninstall:
   cd docs/man && make uninstall
 
+# --- Runtimes ---
+
+# Pass a subcommand through to the runtimes CLI (just runtimes status)
+runtimes *CMD:
+  ./common/bin/bin/runtimes {{ CMD }}
+
 # --- Dev ---
 
-# Run shellcheck on all shell scripts and bash dotfiles
+# Run shellcheck on all shell scripts, bash dotfiles, and extensionless shims
 lint:
   #!/usr/bin/env bash
   set -euo pipefail
@@ -69,6 +75,10 @@ lint:
   while IFS= read -r -d '' f; do
     files+=("$f")
   done < <(find common macos linux bsd alpine wsl -type f \( -name '.bash*' -o -name '.profile' \) -print0 2>/dev/null)
+  # Extensionless shims and direnv helpers (direnv.toml is not shell — exclude it)
+  while IFS= read -r -d '' f; do
+    files+=("$f")
+  done < <(find common/bin/bin common/direnv/.config/direnv -type f ! -name 'direnv.toml' -print0 2>/dev/null)
   if [[ ${#files[@]} -eq 0 ]]; then
     echo "lint: nothing to check."
     exit 0

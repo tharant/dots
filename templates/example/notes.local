@@ -1,0 +1,3 @@
+Local scratch notes; excluded from scaffolded projects by the
+manifest's ignore=*.local glob. Kept in the tree to demonstrate
+the ignore mechanism.
