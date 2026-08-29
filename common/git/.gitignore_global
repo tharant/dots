@@ -1,0 +1,18 @@
+# OS junk
+.DS_Store
+._*
+Thumbs.db
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*~
+*.rej
+*.orig
+tags
+
+# Vim state
+.vim/.theme
+.netrwhist
+.viminfo
