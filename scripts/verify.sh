@@ -128,8 +128,13 @@ target_dir_for() {
 section "Decrypted secrets"
 found_secrets=0
 while IFS= read -r -d '' age_file; do
-    found_secrets=$((found_secrets + 1))
     rel_path="${age_file#"$SECRETS_DIR"/}"
+    # Passphrase fallback copies (X.phrase.age) exist only as vault copies of
+    # X.age — the deployed target is X itself, so skip them here
+    case "$rel_path" in
+        *.phrase.age) continue ;;
+    esac
+    found_secrets=$((found_secrets + 1))
     subdir="${rel_path%%/*}"
     filename="${rel_path#*/}"
     filename="${filename%.age}"
