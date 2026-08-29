@@ -354,6 +354,39 @@ install_node_tarball() {
 
 # --- Per-platform core installs ---
 
+install_homebrew() {
+    # A pristine Mac has neither brew nor any other supported package manager,
+    # so bootstrap Homebrew itself via the official installer. The installer
+    # must run as the user (it invokes sudo itself for the prefix directory);
+    # NONINTERACTIVE=1 skips the "press RETURN" pause so curl | bash works.
+    if command_exists brew; then
+        return 0
+    fi
+    if [[ $EUID -eq 0 ]]; then
+        error "Homebrew cannot be installed as root. Log in as an admin user and re-run."
+    fi
+    info "Homebrew not found — installing (official installer, non-interactive)..."
+    if ! NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL \
+        https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; then
+        error "Homebrew installation failed — install it from https://brew.sh and re-run."
+    fi
+    # Put brew on PATH for the rest of this run; the shellenv itself lands in
+    # the shell via the macos platform layer on the next login.
+    local prefix
+    case "$(uname -m)" in
+        arm64) prefix="/opt/homebrew" ;;
+        *)     prefix="/usr/local" ;;
+    esac
+    case ":$PATH:" in
+        *":$prefix/bin:"*) ;;
+        *) export PATH="$prefix/bin:$PATH" ;;
+    esac
+    if ! command_exists brew; then
+        error "Homebrew installed but brew is still not on PATH ($prefix/bin)."
+    fi
+    info "Homebrew installed at $(command -v brew)"
+}
+
 macos_default_shell() {
     # Hand the login shell over to Homebrew's bash; idempotent and non-fatal
     local brew_bin brew_prefix bash_path arch
@@ -501,9 +534,7 @@ install_core() {
 
     case "$PLATFORM" in
         macos)
-            if ! command_exists brew; then
-                error "Homebrew not found. Install it from https://brew.sh first, then re-run."
-            fi
+            install_homebrew
             info "Installing core packages via Homebrew..."
             pkg_install_set bash age stow just tmux shellcheck git coreutils
             macos_default_shell

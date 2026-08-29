@@ -62,11 +62,12 @@ individual failures are recorded as non-fatal.
 
 Per-platform behaviour:
 
-- **macos** — requires Homebrew to already be installed (no automated
-  install); installs `bash age stow just tmux shellcheck git coreutils`, adds
-  Homebrew's bash to `/etc/shells`, and makes it the login shell with `chsh`
-  (both non-fatal if they fail). The prefix is derived from the `brew` binary
-  path, falling back to `/opt/homebrew` (arm64) or `/usr/local`.
+- **macos** — installs Homebrew itself when `brew` is missing (official
+  installer, `NONINTERACTIVE=1`, run as the invoking user); installs `bash age
+  stow just tmux shellcheck git coreutils`, adds Homebrew's bash to
+  `/etc/shells`, and makes it the login shell with `chsh` (both non-fatal if
+  they fail). The prefix is derived from the `brew` binary path, falling back
+  to `/opt/homebrew` (arm64) or `/usr/local`.
 - **Alpine** — ensures the `community` repository is enabled in
   `/etc/apk/repositories` (derived from the `main` line and appended; if the
   file or the mirror line is missing, the failure is recorded and the step is
@@ -147,7 +148,8 @@ adoption is a single stow run.
   failure list.
 - **1** — a fatal error occurred, *or* one or more non-fatal steps failed.
   The fatal paths are: unsupported platform, no supported package manager,
-  Homebrew missing on macOS, Alpine run without bash, no privileges when
+  the Homebrew installer failing or setup.sh running as root (Homebrew
+  refuses root), Alpine run without bash, no privileges when
   required, failed clone, GNU Stow still missing after install (or
   impossible to install in the `--restow`/`--adopt`/`--unstow` modes),
   unknown option, `verify.sh` missing — and, because the decrypt and verify

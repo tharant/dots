@@ -93,7 +93,11 @@ non\-fatal.
 Per\-platform behaviour:
 .TP
 .B macos
-Requires Homebrew (no automated install). Installs bash, age, stow, just,
+Installs Homebrew itself when
+.I brew
+is missing (official installer with
+.BR "NONINTERACTIVE=1" ,
+run as the invoking user). Then installs bash, age, stow, just,
 tmux, shellcheck, git, coreutils. Then installs Homebrew's bash into
 .I /etc/shells
 and makes it the login shell with
@@ -303,7 +307,8 @@ All requested steps completed without recorded failures.
 .B 1
 Either a fatal error occurred or one or more non\-fatal steps failed.
 The fatal paths are: an unsupported platform; no supported package
-manager; Homebrew missing on macOS; Alpine without bash; no privileges
+manager; the Homebrew installer failing or setup.sh running as root (Homebrew
+refuses root); Alpine without bash; no privileges
 when required; a failed clone; GNU Stow still missing after the install
 step or impossible to install in the
 .BR \-\-restow ,
