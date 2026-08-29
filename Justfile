@@ -73,8 +73,12 @@ lint:
     files+=("$f")
   done < <(find scripts -name '*.sh' -print0)
   while IFS= read -r -d '' f; do
-    files+=("$f")
-  done < <(find common macos linux bsd alpine wsl -type f \( -name '.bash*' -o -name '.profile' \) -print0 2>/dev/null)
+    case "$f" in
+      # Vendored third-party code is shipped verbatim (like the pre-commit hook)
+      common/trueline/*) ;;
+      *) files+=("$f") ;;
+    esac
+  done < <(find common macos linux bsd alpine wsl -type f \( -name '.bash*' -o -name '.profile' -o -name '*.sh' \) -print0 2>/dev/null)
   # Extensionless shims and the direnv package (.envrc + direnvrc;
   # direnv.toml is not shell — exclude it)
   while IFS= read -r -d '' f; do

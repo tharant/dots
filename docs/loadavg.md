@@ -16,9 +16,14 @@ Deployed as `~/bin/loadavg` by [dots-setup(1)](dots-setup.md) from
 ## Description
 
 Prints the 1, 5 and 15-minute load averages on a single line, space-separated,
-with no decoration. It exists for tmux's status bar: the status segment in
-`.tmux.conf` invokes it as `#($HOME/bin/loadavg)` and supplies all color,
-spacing and labels itself, while this script supplies only the three numbers.
+with no decoration. It exists for tmux's status bar: the inline **fallback**
+status bar in `.tmux.conf` invokes it as `#($HOME/bin/loadavg)` and supplies
+all color, spacing and labels itself, while this script supplies only the
+three numbers. The *primary* status bar is the tmux-powerline plugin (see
+[tmux-powerline](tmux-powerline.md)), whose built-in `load` segment renders
+the load average when the plugin is installed; the fallback bar (and this
+shim) takes over only when the clone is missing, e.g. before setup.sh has
+run.
 
 It takes no options and reads no input; a status-line refresh simply runs it
 once per interval.
@@ -45,7 +50,9 @@ once per interval.
 platform-free `.tmux.conf` can contain status-line functions that would
 otherwise need per-platform variants — the platform-specific part (reading
 the load on Linux vs. macOS, reaching the clipboard on Wayland vs. WSL2) is
-isolated in the shim in `common/bin/` instead.
+isolated in the shim in `common/bin/` instead. `loadavg` feeds the inline
+fallback bar; the primary bar (tmux-powerline) reads the load with its own
+built-in segment.
 
 If you add another script that a config file must invoke, follow the same
 pattern and its documentation contract: a shell shim in `common/bin/bin/`,
@@ -61,8 +68,9 @@ $ ~/bin/loadavg
 0.72 0.55 0.48
 ```
 
-The tmux status segment that consumes it (unchanged across all platforms,
-because the shim absorbs the differences):
+The inline fallback status bar that consumes it (unchanged across all
+platforms, because the shim absorbs the differences — the primary
+tmux-powerline bar does not call this shim):
 
 ```
 set-option -g status-right '#[fg=colour8,bg=black]#[fg=white,bg=colour8] #($HOME/bin/loadavg) ...'

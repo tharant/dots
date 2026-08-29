@@ -22,6 +22,9 @@ dots/
 │   ├── nvim/        # .config/nvim/init.lua (clipboard-guarded)
 │   ├── ssh/         # ssh config (portable; UseKeychain behind IgnoreUnknown)
 │   ├── tmux/        # .tmux.conf (single, identical on every platform)
+│   ├── tmux-powerline/ # .config/tmux-powerline/: config.sh + themes/dots.sh
+│   │                #   (plugin cloned by setup.sh to ~/.config/tmux-powerline/
+│   │                #   tmux-powerline at a pinned commit; theme follows ~/.vim/.theme)
 │   ├── trueline/    # .local/trueline/ (patched trueline.sh + .trueline.conf)
 │   └── vim/         # .vimrc, .vim/ (vim-plug; plug.vim vendored, coc on 'release' branch)
 ├── macos/           # macOS overrides → .bashrc.platform.d/macos.sh, .bash_profile
@@ -63,6 +66,10 @@ dots/
 Layers stack: a WSL2-Alpine distro gets both `alpine.sh` and `wsl.sh` (setup.sh detects distro via `/etc/os-release`, WSL via `/proc/version`/`$WSL_DISTRO_NAME`, and stows `common` + `$PLATFORM` + `alpine` + `wsl` as applicable).
 
 Platform files load in every interactive shell (login or not); `common/bash/.bash_profile` files are 5-line `source ~/.bashrc` shims. The trueline prompt is gated on bash ≥ 4.3 (macOS `/bin/bash` 3.2 gets a clean skip, not an error).
+
+### Statusline: tmux-powerline
+
+`.tmux.conf` loads the [tmux-powerline](https://github.com/erikw/tmux-powerline) plugin (no tpm): `setup.sh` clones it into `~/.config/tmux-powerline/tmux-powerline` at `TMUX_POWERLINE_PIN`, and `.tmux.conf`'s last line sources `main.tmux` behind an `if-shell` guard. The plugin's config + theme come from the `common/tmux-powerline` package (`~/.config/tmux-powerline/config.sh` + `themes/dots.sh`); the theme reads `~/.vim/.theme` so the status bar, vim statusline (airline) and bash prompt shift palette together (gruvbox default, codedark option). The old hand-rolled bar stays inline in `.tmux.conf` as a fallback for machines stowed without running setup.sh — the plugin overrides all of its options, so no conditionals are needed. `just restow` re-syncs the clone to the pin; bump `TMUX_POWERLINE_PIN` deliberately (see [docs/tmux-powerline.md](docs/tmux-powerline.md)).
 
 ### Deployment with GNU Stow
 
@@ -138,7 +145,10 @@ over all pages) and fix any doc drift. The [README](README.md)
 Documentation table must list every page/script pair. Currently documented:
 `dots-setup`, `dots-encrypt`, `dots-decrypt`, `dots-verify`, `loadavg`,
 `tmux-copy`, `runtimes` (the direnv feature guide, `docs/direnv-runtimes.md`,
-accompanies it).
+accompanies it). Config files sourced by third-party programs (e.g.
+`common/tmux-powerline/.config/tmux-powerline/{config.sh,themes/dots.sh}`)
+are configuration, not scripts — no manpage pair; they're covered by the
+[tmux-powerline reference](docs/tmux-powerline.md).
 
 Scripts can also be called directly:
 
