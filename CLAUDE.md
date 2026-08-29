@@ -13,13 +13,16 @@ Central dotfiles repository for Bash configurations across macOS, Linux, and BSD
 ```
 dots/
 ├── common/          # Shared configs across all platforms (GNU Stow packages)
-│   ├── bash/        # .bashrc, .bash_profile, .bash_aliases
+│   ├── bash/        # .bashrc, .bash_aliases, .bash_functions, ...
 │   ├── git/         # .gitconfig, .gitignore_global
-│   └── ssh/         # ssh config (public parts)
+│   ├── nvim/        # .config/nvim/init.lua
+│   ├── ssh/         # ssh config (public parts)
+│   ├── tmux/        # .tmux.conf
+│   ├── trueline/    # .local/trueline/ (patched trueline.sh + .trueline.conf)
+│   └── vim/         # .vimrc, .vim/ (pathogen + vendored bundle plugins)
 ├── macos/           # macOS-specific overrides (Stow packages)
 ├── linux/           # Linux-specific overrides (Stow packages)
-│   ├── bash/        # .bash_profile
-│   └── vim/         # .vimrc, .vim/
+│   └── bash/        # .bash_profile
 ├── bsd/             # BSD-specific overrides (Stow packages)
 │   └── bash/        # .bash_profile
 ├── secrets/         # Encrypted files (*.age only, hybrid encrypted)
