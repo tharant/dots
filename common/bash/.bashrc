@@ -35,14 +35,19 @@ if [[ -z "${SSH_AUTH_SOCK-}" ]] || [[ ! -S "${SSH_AUTH_SOCK}" ]]; then
   eval "$(ssh-agent -t 1d)"
 fi
 
-# NVM
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+# fnm: expose the default node install when one is set (the alias is created
+# by `fnm default <version>`); per-project versions come via direnv .envrc.
+# PATH points straight at the alias dir — `fnm env` is never evaluated, so
+# no multishell symlinks accumulate on every shell start.
+if [[ -d "$HOME/.local/share/fnm/aliases/default" ]]; then
+  case ":$PATH:" in
+    *":$HOME/.local/share/fnm/aliases/default/bin:"*) ;;
+    *) export PATH="$HOME/.local/share/fnm/aliases/default/bin:$PATH" ;;
+  esac
+fi
 
 # Optional tools (guarded)
 command -v kubectl &>/dev/null && source <(kubectl completion bash)
-command -v direnv &>/dev/null && eval "$(direnv hook bash)"
 command -v aws_completer &>/dev/null && complete -C aws_completer aws
 
 # Trueline prompt (requires bash >= 4.3, e.g. brew-installed on macOS)
@@ -53,6 +58,11 @@ if [[ -f ~/.local/trueline/.trueline.conf ]]; then
     echo "trueline: needs bash >= 4.3 (you have ${BASH_VERSION}); keeping the default prompt." 1>&2
   fi
 fi
+
+# direnv hook: must come after trueline, which replaces PROMPT_COMMAND
+# without chaining — evaluated before it, the hook would be silently
+# discarded on every bash >= 4.3 shell.
+command -v direnv &>/dev/null && eval "$(direnv hook bash)"
 
 #THIS MUST BE AT THE END OF THE FILE FOR SDKMAN TO WORK!!!
 export SDKMAN_DIR="$HOME/.sdkman"
