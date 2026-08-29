@@ -172,13 +172,32 @@ lock_lookup() {
     # lines are "<name> <spec> <resolved> <absolute store path>" — the path
     # is everything from field 4 (spaces never appear in store paths, but the
     # cut is greedy anyway).
+    #
+    # A lock file can be committed into a cloned repo, so its path field is
+    # untrusted input: only a path inside the backend's store root is
+    # applied. A rejected entry reads as "not satisfied" — `ensure` re-runs
+    # the install and rewrites the lock, `path` reports it — so a crafted
+    # lock can never prepend an arbitrary directory to PATH.
     LOCK_PATH=""
-    local line
+    local line root
     [ -r "$3" ] || return 1
     line=$(awk -v n="$1" -v s="$2" '$1 == n && $2 == s { print }' "$3") || return 1
     [ -n "$line" ] || return 1
     LOCK_PATH=$(printf '%s\n' "$line" | cut -d' ' -f4-)
     [ -n "$LOCK_PATH" ] || return 1
+    case $1 in
+        python) root=$UV_PYTHON_DIR ;;
+        node)   root="$FNM_DIR/node-versions" ;;
+        java)   root="$SDKMAN_DIR/candidates" ;;
+        *)      return 1 ;;
+    esac
+    case $LOCK_PATH in
+        "$root"/*) ;;
+        *)  return 1 ;;
+    esac
+    case $LOCK_PATH in
+        *"/.."*) return 1 ;;
+    esac
     return 0
 }
 
@@ -520,6 +539,13 @@ cmd_template() {
     done < "$TEMPLATES_DIR/$name.template"
     info "template $name: $description"
 
+    # The ignore patterns must reach the case statements as literal globs:
+    # word-splitting $ignore would also pathname-expand it against the
+    # destination directory, turning patterns into whatever files happen to
+    # be there. Globbing stays off for the whole expansion (restored below;
+    # every failure path exits the process, so the shell state cannot leak).
+    set -f
+
     files=$(cd "$TEMPLATES_DIR/$name" && find . -type f | sed 's|^\./||') || true
     dirs=$(cd "$TEMPLATES_DIR/$name" && find . -type d | sed 's|^\./||') || true
 
@@ -562,6 +588,15 @@ cmd_template() {
                 warn "template: \$$var is not set; leaving {{$var}} in $rel"
                 continue
             fi
+            # sed cannot carry a newline through the replacement side; a
+            # multi-line value would abort the substitution (BSD/GNU sed
+            # differ in how), so it is skipped like an unset one.
+            case $escval in
+                *$'\n'*)
+                    warn "template: \$$var contains a newline; leaving {{$var}} in $rel"
+                    continue
+                    ;;
+            esac
             escval=$(printf '%s' "$escval" | sed -e 's/[\\|&]/\\&/g')
             sed -e "s|{{$var}}|$escval|g" "$tmp/$rel" > "$tmp/$rel.sub" \
                 && mv "$tmp/$rel.sub" "$tmp/$rel"
@@ -579,6 +614,7 @@ cmd_template() {
     rm -rf "$tmp"
     TEMPLATE_TMP=""
     trap - EXIT
+    set +f
     info "template $name expanded into $dest"
 }
 

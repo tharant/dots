@@ -49,16 +49,56 @@ _runtimes_home() {
     printf '%s\n' "$path"
 }
 
+# Backend store root for a runtime name (env-overridable; defaults match the
+# runtimes shim's UV_PYTHON_DIR / FNM_DIR / SDKMAN_DIR).
+_runtimes_store_root() {
+    case "$1" in
+        python) printf '%s\n' "${UV_PYTHON_INSTALL_DIR:-$HOME/.local/share/uv/python}" ;;
+        node)   printf '%s\n' "${FNM_DIR:-$HOME/.local/share/fnm}/node-versions" ;;
+        java)   printf '%s\n' "${SDKMAN_DIR:-$HOME/.sdkman}/candidates" ;;
+        *)      return 1 ;;
+    esac
+}
+
+# A lock file can be committed into a cloned repo, so its fields are
+# untrusted input: the path is only applied when it sits inside its
+# backend's store root (a crafted lock must not be able to point PATH at an
+# arbitrary directory), and the resolved version only when it cannot be
+# mistaken for a path (it is passed to `uv venv --python`).
+_runtimes_valid_entry() {
+    # <name> <resolved> <path>
+    local root
+    root=$(_runtimes_store_root "$1") || return 1
+    case "$2" in
+        */*|.*|"") return 1 ;;
+    esac
+    case "$3" in
+        "$root"/*)
+            case "$3" in
+                *"/.."*) return 1 ;;
+            esac
+            return 0
+            ;;
+    esac
+    return 1
+}
+
 # Print "<resolved>" and "<path>" (two lines) from the first .runtimes.lock
-# entry matching name+spec; return 1 when the lock is missing or has no
-# matching entry. Lock line format: <name> <spec> <resolved> <path>
+# entry matching name+spec; return 1 when the lock is missing, has no
+# matching entry, or the entry fails validation. Lock line format:
+# <name> <spec> <resolved> <path>
 _runtimes_lock_lookup() {
     local name="$1" spec="$2" lock="$3"
     local lname lspec lresolved lpath
     [ -r "$lock" ] || return 1
     while read -r lname lspec lresolved lpath || [ -n "${lname:-}" ]; do
         if [ "$lname" = "$name" ] && [ "$lspec" = "$spec" ]; then
-            printf '%s\n%s\n' "$lresolved" "$(_runtimes_home "$lpath")"
+            lpath=$(_runtimes_home "$lpath")
+            if ! _runtimes_valid_entry "$name" "$lresolved" "$lpath"; then
+                log_error "runtimes: lock entry '$name $spec' in $lock points outside the runtime store — ignoring it (possible tampering)"
+                return 1
+            fi
+            printf '%s\n%s\n' "$lresolved" "$lpath"
             return 0
         fi
     done < "$lock"
