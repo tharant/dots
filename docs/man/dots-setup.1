@@ -93,7 +93,11 @@ non\-fatal.
 Per\-platform behaviour:
 .TP
 .B macos
-Installs Homebrew itself when
+Exports
+.B HOMEBREW_NO_ANALYTICS
+and
+.B HOMEBREW_NO_ENV_HINTS
+set to 1 (Homebrew must not call home). Installs Homebrew itself when
 .I brew
 is missing (official installer with
 .BR "NONINTERACTIVE=1" ,
