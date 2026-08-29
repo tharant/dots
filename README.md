@@ -78,6 +78,27 @@ Platform overrides must **not** be conditionals in `common/`. Instead, each plat
 
 The same operations are available through `just` (`just setup`, `just restow`, `just verify`, `just encrypt <file>`, `just lint`, …) — run `just` for the full list.
 
+## Documentation
+
+Each script has a full manual — rendered (roff) and source (markdown), kept in
+agreement with the code they document:
+
+| Page | Script |
+|---|---|
+| [dots-setup(1)](docs/dots-setup.md) | `scripts/setup.sh` — bootstrap, restow, adopt, unstow |
+| [dots-encrypt(1)](docs/dots-encrypt.md) | `scripts/encrypt.sh` — write the dual age artifacts |
+| [dots-decrypt(1)](docs/dots-decrypt.md) | `scripts/decrypt.sh` — materialize secrets locally |
+| [dots-verify(1)](docs/dots-verify.md) | `scripts/verify.sh` — symlink + permissions health check |
+
+Install them as real manpages (see [docs/man/Makefile](docs/man/Makefile)):
+
+```bash
+just man-install     # symlinks docs/man/*.1 into ~/.local/share/man/man1
+just man-check       # mandoc -T lint on all pages
+```
+
+Other reference docs live alongside: [bash startup order](docs/bash-startup-order.md), [stow adopt workflow](docs/stow-adopt-workflow.md).
+
 ## Secrets
 
 Each secret is stored as two age artifacts encrypting the same plaintext — `X.age` (age recipient key, from `secrets/recipients.txt`) and `X.phrase.age` (passphrase fallback) — since no age CLI can combine both in one file. Either can decrypt:

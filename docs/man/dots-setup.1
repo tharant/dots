@@ -1,0 +1,445 @@
+.TH DOTS-SETUP 1 "2026-08-28" "dots" "User Commands"
+.SH NAME
+dots\-setup \- bootstrap and manage the dots dotfiles deployment
+.SH SYNOPSIS
+.B dots\-setup
+.RB [ \-\-restow | \-\-adopt | \-\-unstow | \-\-force | \-\-verify | \-h | \-\-help ]
+.PP
+.B dots\-setup
+.br
+(no arguments: full bootstrap \-\- install dependencies, clone, decrypt, stow)
+.SH DESCRIPTION
+.B dots\-setup
+bootstraps the dots dotfiles repository on a new machine and manages an
+existing deployment. With no arguments it runs the full pipeline in this
+order: install core packages, run preflight checks, clone or update the
+repository, decrypt encrypted secrets, and stow all packages into
+.IR $HOME .
+.PP
+The script is written to be piped straight from
+.BR curl (1)
+into
+.BR bash (1)
+on a fresh machine (it reattaches stdin to
+.I /dev/tty
+so
+.BR age (1)
+passphrase prompts and
+.B chsh
+can read from the terminal when stdin is a pipe). On a bare Alpine system
+bash, git and curl must be installed first:
+.B "apk add bash git curl".
+.PP
+Privilege policy: individual commands are run as root when the script
+already runs as root, otherwise through
+.B sudo
+if available, then
+.B doas .
+If the script is neither running as root nor can find sudo or doas, it
+warns; the full and
+.B \-\-force
+runs then abort at
+.BR require_priv
+before touching anything, so package installation, locale generation and
+the write to
+.I /etc/shells
+never run in those modes. The
+.BR \-\-restow ,
+.B \-\-adopt
+and
+.B \-\-unstow
+modes perform no
+.B require_priv
+check of their own: after the warning they proceed, and the first step
+that genuinely needs root (installing
+.B stow
+when it is missing) fails, reported by the ERR trap.
+.B Homebrew
+is never run with the privilege prefix.
+.PP
+Platform and environment detection:
+.B uname \-s
+maps Darwin to
+.B macos ,
+Linux to
+.B linux ,
+and anything ending in
+.B BSD
+to
+.B bsd ;
+anything else is a fatal error. On Linux the distribution ID is read from
+.I /etc/os-release .
+WSL is detected from
+.B WSL_DISTRO_NAME
+or by finding \(dqmicrosoft\(dq in
+.IR /proc/version .
+An OrbStack kernel string on macOS is reported informationally only.
+.PP
+Package manager detection tries, in order:
+.BR brew ,
+.BR apt\-get ,
+.BR dnf ,
+.BR pacman ,
+.BR apk ,
+.BR pkg .
+Finding none of them is a fatal error. With
+.BR apt\-get ,
+.B apt\-get update
+is run once before the first installation. Batch installs are retried
+package by package if the batch fails, so one missing or renamed package
+does not sink the whole set; individual failures are recorded as
+non\-fatal.
+.PP
+Per\-platform behaviour:
+.TP
+.B macos
+Requires Homebrew (no automated install). Installs bash, age, stow, just,
+tmux, shellcheck, git, coreutils. Then installs Homebrew's bash into
+.I /etc/shells
+and makes it the login shell with
+.B chsh
+(non\-fatal if this fails). The Homebrew prefix is derived from
+.IR brew ,
+falling back to
+.I /opt/homebrew
+on arm64 and
+.I /usr/local
+otherwise.
+.TP
+.B Linux (Alpine)
+Ensures the
+.B community
+repository is enabled in
+.I /etc/apk/repositories
+(deriving it from the
+.B main
+line and appending it if absent; missing files or mirrors are recorded as
+non\-fatal failures), refreshes apk indexes, then installs bash,
+coreutils, findutils, util\-linux, git, age, stow, just, tmux, shellcheck,
+shadow, bash\-completion, ncurses\-terminfo, curl, ca\-certificates \- and
+.B sudo
+as well when neither sudo nor doas is present.
+.TP
+.B Linux (Debian, apt\-get)
+Installs git, age, stow, tmux, shellcheck, bash, coreutils, less, locales,
+ca\-certificates, curl, wl\-clipboard, xz\-utils, then extras: Node.js
+(from apt when the candidate is version 22 or newer, otherwise the
+official v22.23.2 tarball extracted into
+.I /usr/local/lib/nodejs
+with
+.B node ,
+.B npm
+and
+.B npx
+symlinked into
+.IR /usr/local/bin ).
+The extraction directory is created with
+.B mkdir \-p
+first, so this path succeeds on a pristine Debian where the apt
+candidate is below 22. Then:
+.B just
+(from apt when available, otherwise the upstream musl binary for just
+1.58.0 into
+.IR /usr/local/bin ),
+and generation of the
+.B en_US.UTF\-8
+locale via
+.BR locale\-gen .
+.TP
+.B Linux (other)
+Installs git, age, stow, just, tmux, shellcheck, bash, coreutils, curl,
+ca\-certificates with whichever of dnf, pacman or pkg is detected.
+.TP
+.B bsd
+Installs git, age, stow, just, tmux, shellcheck, bash, coreutils, curl,
+ca_root_nss via
+.BR pkg .
+.PP
+After the platform\-specific installs, a post\-install check verifies git,
+curl, just, tmux and shellcheck (each missing tool is recorded as a
+non\-fatal failure), treats a missing
+.B stow
+as fatal, and falls back to a static age release (v1.3.1) installed to
+.I ~/.local/bin
+when no
+.B age
+binary exists.
+.PP
+Repository handling: if
+.I $DOTS_DIR/.git
+already exists the script pulls with
+.B "\-\-ff\-only"
+(adding
+.B \-\-autostash
+when the working tree is dirty; a failed pull keeps the current checkout),
+otherwise it clones
+.BR $DOTS_REPO_URL .
+Either way it sets
+.B "core.hooksPath .githooks"
+in the clone so the shellcheck pre\-commit hook stays active.
+.PP
+Secrets are decrypted by invoking
+.I $DOTS_DIR/scripts/decrypt.sh
+with the
+.B FORCE
+value exported to it; stowing runs
+.B "stow \-d <dir> \-t $HOME \-\-no\-folding"
+over every package in
+.I common ,
+in
+.I <platform> ,
+plus
+.I alpine
+on Alpine and
+.I wsl
+under WSL (layers whose directory does not exist are skipped silently).
+A package that fails to stow is recorded as a non\-fatal failure and the
+remaining packages continue.
+.SH OPTIONS
+.TP
+.B \-\-restow
+Re\-stow all packages with
+.B "\-d <dir> \-t $HOME \-\-no\-folding \-\-restow" .
+Use after a
+.B git pull .
+Requires the repository to be cloned already; installs stow if it is
+missing, but installs nothing else and does not decrypt secrets.
+.TP
+.B \-\-adopt
+Adopt existing files into the repo with a single stow run using
+.B "\-\-no\-folding \-\-adopt"
+(there is no separate re\-stow pass). Requires the repository to be
+cloned already; installs stow
+if it is missing, but installs nothing else and does not decrypt secrets.
+See
+.I docs/stow\-adopt\-workflow.md
+in the repository for how adoption interacts with files that already
+exist in
+.IR $HOME .
+.TP
+.B \-\-unstow
+Remove all symlinks managed by stow
+.RB ( \-\-no\-folding "\ \-\-delete" ) .
+Installs
+.B stow
+first if it is missing (which may need privileges). Reports \(dqAll
+symlinks removed.\(dq on success.
+.TP
+.B \-\-force
+Run the full pipeline with
+.B FORCE=true
+exported to
+.BR dots\-decrypt (1) ,
+so every secret is re\-decrypted even when the target file is already
+newer than its encrypted artifact. Also re\-stows all packages. There are
+no other freshness checks in the script to skip; effectively
+.B \-\-force
+is the full run plus forced re\-decryption.
+.TP
+.B \-\-verify
+Run
+.I $DOTS_DIR/scripts/verify.sh
+against the current deployment and nothing else. Requires the repository
+to be cloned already. It is run directly when executable, otherwise via
+.BR bash (1)
+with a warning.
+.TP
+.BR \-h ", " \-\-help
+Print usage and exit 0.
+.PP
+Only the first argument is inspected. Anything other than the flags above, in
+first position, is a fatal error: \(dqUnknown option: <arg> (see \-\-help)\(dq.
+Arguments after the first are never checked and are silently ignored \-\-
+.B "\-\-restow \-\-force"
+runs
+.B \-\-restow
+and discards
+.BR \-\-force ,
+and
+.B "\-\-verify \-\-quiet"
+does the same.
+.SH ENVIRONMENT
+.TP
+.B DOTS_REPO_URL
+Repository to clone when
+.I $DOTS_DIR/.git
+does not exist. Default:
+.BR "https://github.com/tharant/dots.git" .
+Ignored when the repository is already cloned (an existing clone is
+pulled, never re\-pointed).
+.TP
+.B DOTS_DIR
+Where the repository lives or should be cloned. Default:
+.IR $HOME/.dots .
+It is read on every run to locate the clone, not only for the initial
+clone, so it can also re-point the
+.BR \-\-restow ,
+.B \-\-adopt
+and
+.B \-\-unstow
+modes at a checkout elsewhere.
+.TP
+.B FORCE
+Default \(dqfalse\(dq. Set to \(dqtrue\(dq by
+.B \-\-force
+and passed through to
+.B dots\-decrypt (1).
+.TP
+.B WSL_DISTRO_NAME
+Read (not reset) during environment detection; any non\-empty value marks
+the environment as WSL and enables the
+.I wsl
+stow layer.
+.TP
+.B SHELL
+Read on macOS to decide whether
+.B chsh
+is needed for Homebrew's bash.
+.SH EXIT STATUS
+.TP
+.B 0
+All requested steps completed without recorded failures.
+.TP
+.B 1
+Either a fatal error occurred or one or more non\-fatal steps failed.
+The fatal paths are: an unsupported platform; no supported package
+manager; Homebrew missing on macOS; Alpine without bash; no privileges
+when required; a failed clone; GNU Stow still missing after the install
+step or impossible to install in the
+.BR \-\-restow ,
+.B \-\-adopt
+and
+.B \-\-unstow
+modes; an unknown option; an absent
+.I verify.sh ; and \-\- because
+.B decrypt_secrets
+and
+.B run_verify
+are not wrapped in conditionals \-\- a non\-zero exit from
+.I scripts/decrypt.sh
+(in the full and
+.B \-\-force
+runs) or from
+.I scripts/verify.sh
+under
+.BR \-\-verify ,
+which aborts the run through the ERR trap.
+.PP
+Non\-fatal failures \-\- for example a package that could not be installed
+individually, a missing expected tool after install, a failed chsh or
+locale generation, or a fallback tarball that could not be downloaded (a
+failed
+.B "git pull"
+is also non\-fatal: the current checkout is kept) \-\- are listed
+immediately before the exit.
+.PP
+Note that a run can print warnings and still exit 0 as long as no failure
+was recorded in
+.BR FAILURES ;
+conversely any recorded failure makes the run exit 1 even though the
+script kept going.
+.SH FILES
+.TP
+.I $HOME/.dots
+Default repository location.
+.TP
+.I /etc/os-release
+Read to identify the Linux distribution.
+.TP
+.I /proc/version
+Read to detect WSL on Linux.
+.TP
+.I /etc/apk/repositories
+Read and possibly extended (community repository) on Alpine.
+.TP
+.I /etc/locale.gen
+Modified on Debian to enable
+.BR en_US.UTF\-8 .
+.TP
+.I /etc/shells
+Appended on macOS with Homebrew's bash path.
+.TP
+.I ~/.local/bin/age ", " ~/.local/bin/age\-keygen
+Static age fallback location (mode 0755); a warning suggests adding the
+directory to
+.B PATH
+if it is not already there.
+.TP
+.I /usr/local/bin/just ", " /usr/local/lib/nodejs
+Static just and Node.js fallback locations (Debian only); the extraction
+directory is created by the script when missing.
+.TP
+.I $DOTS_DIR/scripts/decrypt.sh ", " $DOTS_DIR/scripts/verify.sh
+Invoked for the decrypt and verify steps.
+.TP
+.I $DOTS_DIR/.githooks
+Set as
+.B core.hooksPath
+after clone or pull.
+.SH DIAGNOSTICS
+Progress, warnings and errors are printed to standard output with
+.B ==>
+prefixed markers. The ERR trap reports \(dqStep failed with exit code
+N. Run with \-\-help for options.\(dq and exits 1. Non\-fatal step
+failures are collected and summarised at the end as a WARNING list before
+the script exits 1.
+.SH EXAMPLES
+.TP
+Full bootstrap over a pipe on a fresh machine:
+.nf
+curl \-fsSL https://raw.githubusercontent.com/tharant/dots/main/scripts/setup.sh | bash
+.fi
+.TP
+Re\-apply everything after a git pull:
+.nf
+~/.dots/scripts/setup.sh \-\-restow
+.fi
+.TP
+Take over files that already exist in $HOME:
+.nf
+~/.dots/scripts/setup.sh \-\-adopt
+.fi
+.TP
+Remove every symlink the deployment created:
+.nf
+~/.dots/scripts/setup.sh \-\-unstow
+.fi
+.TP
+Re\-decrypt all secrets even if they look current:
+.nf
+~/.dots/scripts/setup.sh \-\-force               # full pipeline, forced decrypt
+.fi
+Note that exporting
+.B FORCE=true
+around a
+.B \-\-restow
+run has no effect on secrets: they are re\-decrypted only by the decrypt
+step of the full run (or the equivalent
+.B \-\-force
+run), and
+.B \-\-restow
+never reaches that step.
+.TP
+Clone somewhere else:
+.nf
+DOTS_DIR=$HOME/src/dots ~/.dots/scripts/setup.sh
+.fi
+.SH BUGS
+The usage text baked into the script itself (printed by
+.B \-h
+or
+.BR \-\-help )
+is out of date: it lists only
+.B "\-\-restow \-\-adopt \-\-unstow \-\-force \-\-verify"
+and describes
+.B \-\-adopt
+as \(dqAdopt existing files into the repo, then re\-stow\(dq, even though
+.B \-\-adopt
+is a single stow run and the script's own error messages point at
+.B \-\-help .
+This page, not that text, is authoritative.
+.SH SEE ALSO
+.BR dots\-encrypt (1),
+.BR dots\-decrypt (1),
+.BR dots\-verify (1),
+.BR stow (1)

@@ -1,0 +1,278 @@
+.TH DOTS\-DECRYPT 1 "2026-08-28" "dots" "User Commands"
+.SH NAME
+dots\-decrypt \- decrypt age artifacts to their target locations
+.SH SYNOPSIS
+.B dots\-decrypt
+.SH DESCRIPTION
+.B dots\-decrypt
+is the shell script
+.IR scripts/decrypt.sh ,
+invoked as
+.B ./scripts/decrypt.sh
+from inside a checkout of the
+.B dots
+repository, or as
+.B just decrypt
+(via
+.BR Justfile ) .
+It takes no command line arguments; any arguments given are ignored.  All
+behavior is controlled by the environment variables described under
+.BR ENVIRONMENT .
+.PP
+Every secret in the repository is stored under
+.I secrets/
+as two age artifacts encrypting the same plaintext:
+.TP
+.I X.age
+encrypted to the recipients listed in
+.IR secrets/recipients.txt ;
+decrypted without prompts on an established machine that holds the
+matching private age identity.
+.TP
+.I X.phrase.age
+passphrase-encrypted fallback for a fresh machine that has no identity
+yet (the curl | bash bootstrap); age prompts for the passphrase.
+.PP
+The script walks
+.IR secrets/ ,
+finds every
+.I *.age
+file, and decrypts each one to a target file in the home directory.  The
+target is chosen by the first path component below
+.IR secrets/ :
+.\" keep next five lines together
+.TP
+.I secrets/ssh/X.age
+decrypts to
+.IR ~/.ssh/X .
+.TP
+.I secrets/tokens/X.age
+decrypts to
+.IR ~/.config/tokens/X .
+.\" end list
+.PP
+For each artifact the script tries, in order:
+.TP
+1.
+the age identity (if one exists on this machine) against
+.BR X.age ;
+.TP
+2.
+the passphrase against
+.BR X.phrase.age ;
+.TP
+3.
+the passphrase against
+.B X.age
+itself \(em this covers legacy secrets stored as a single
+passphrase-only artifact.
+.\" end list
+.PP
+Each decryption is written to a temporary file created in the target
+directory, the temporary file is set to mode 0600 with
+.BR chmod (1),
+and only then is it renamed over the target.  If
+.BR age (1)
+fails, the temporary file is removed and the existing target is left
+untouched.  The target directory is created with
+.B mkdir \-p
+if needed and is set to mode 0700 before anything is decrypted into it.
+.PP
+Unless
+.B FORCE
+is set, an artifact whose target already exists and is strictly newer than
+both artifacts is skipped entirely.  Concretely, decryption is skipped when
+the target exists, the target is newer than
+.BR X.age ,
+and there is no passphrase copy, or the target is also newer than
+.BR X.phrase.age .
+.SH OPTIONS
+.B dots\-decrypt
+accepts no options or flags.
+.SH ENVIRONMENT
+.TP
+.B AGE_IDENTITY
+Path to the age identity file.  Defaults to
+.IR ~/.age/keys.txt .
+If that file does not exist the script prints a note and relies on the
+passphrase fallback instead.
+.TP
+.B FORCE
+Set to
+.B true
+to re-decrypt even when the freshness check in
+.B DESCRIPTION
+would skip the artifact.  Any other value (including unset) leaves the
+check active.
+.TP
+.B HOME
+Used to resolve the default identity path
+.RI ( ~/.age/keys.txt )
+and every target directory
+.RI ( ~/.ssh ,
+.IR ~/.config/tokens ).
+.SH EXIT STATUS
+.TP
+.B 0
+All artifacts were processed.  This includes the cases where no
+.I .age
+files were found at all and where every target was skipped as up to date.
+.TP
+.B other than 0
+The script runs with
+.B set \-e
+and stops at the first failure, with status 1.  This is the case when
+.B age
+is not installed, a decryption failed (wrong passphrase, aborted prompt,
+corrupt artifact), a rename failed, or no artifact existed for a
+.RI .age
+file; the exit status of
+.BR age (1)
+itself is swallowed and not propagated.  Artifacts later in the
+.I secrets/
+tree are not processed and targets already written stay in place.
+.SH FILES
+.TP
+.I scripts/decrypt.sh
+The script itself; it derives
+.I secrets/
+from its own location, so the working directory is irrelevant.  The only
+requirement is that the script file itself live in a checkout of the
+repository (for example invoked by absolute path, as
+.BR dots\-setup (1)
+does).
+.TP
+.IR "secrets/*.age" " and " "secrets/*/*.age"
+Encrypted artifacts.  Passphrase copies
+.RI ( X.phrase.age )
+are recognized and skipped as primary artifacts.  Artifacts in
+subdirectories with no target mapping are warned about and skipped.
+.TP
+.I ~/.age/keys.txt
+Default age identity, generated with
+.BR "age-keygen \-o ~/.age/keys.txt" .
+The corresponding public key belongs in
+.IR secrets/recipients.txt .
+.TP
+.IR "~/.ssh/" " and " "~/.config/tokens/"
+Target directories for the
+.I ssh/
+and
+.I tokens/
+secret subdirectories.  Created with
+.B mkdir \-p
+if missing, and forced to mode 0700 with
+.B chmod 700
+before every artifact that is actually decrypted into them \(em an
+existing directory with looser permissions is silently tightened, and a
+run in which every target is skipped as up to date leaves the mode
+alone.
+.SH DIAGNOSTICS
+.TP
+.B "Error: age is not installed."
+The
+.B age
+binary is not on
+.BR PATH .
+Exit status 1; nothing is decrypted.
+.TP
+.B "Using age identity: \fIpath\fR"
+An identity file exists at
+.B AGE_IDENTITY
+and will be tried first.
+.TP
+.B "No age identity found at \fIpath\fR \(em will prompt for passphrase."
+No identity file exists; every decryption goes via the passphrase
+fallback.
+.TP
+.B "Warning: No target mapping for subdir '\fIsubdir\fR', skipping \fIrelpath\fR"
+The artifact lives in a subdirectory of
+.I secrets/
+other than
+.I ssh/
+or
+.IR tokens/ .
+It is skipped; this is a warning, not an error.
+.TP
+.B "Skipping (up to date): \fIrelpath\fR -> \fItarget\fR"
+The freshness check passed; the target was not re-decrypted.
+.TP
+.B "Decrypting: \fIrelpath\fR -> \fItarget\fR"
+Decryption of this artifact starts.
+.TP
+.B "Identity did not match, falling back to passphrase..."
+The age identity exists but could not decrypt
+.B X.age
+(for example after the key was rotated); the passphrase copy is tried
+next.
+.TP
+.B "Error: passphrase decryption failed for \fIrelpath\fR"
+Neither the identity nor the passphrase could decrypt the artifact (a
+wrong passphrase, an aborted prompt, or a corrupt file).  The script exits
+non-zero here; rest of the tree is not processed.
+.TP
+.B "Error: no artifacts found for \fIrelpath\fR"
+Neither
+.B X.age
+nor
+.B X.phrase.age
+exists on disk.
+.TP
+.B "No .age files found in \fIsecrets-dir\fR"
+.B find
+matched nothing, for example because the checkout has no
+.I secrets/
+directory.  This is not an error; the exit status is 0.
+.TP
+.B "Decrypted \fIn\fR file(s)."
+Number of
+.I .age
+files seen, including passphrase copies that were skipped without being
+decrypted on their own.
+.SH EXAMPLES
+Decrypt all secrets on an established machine that has
+.IR ~/.age/keys.txt :
+.PP
+.RS
+.nf
+$ ./scripts/decrypt.sh
+Using age identity: /Users/jlambert/.age/keys.txt
+Decrypting: ssh/xrq.io-ecdsa -> /Users/jlambert/.ssh/xrq.io-ecdsa
+Decrypted 2 file(s).
+.fi
+.RE
+.PP
+Fresh machine with no identity (the passphrase of the
+.I *.phrase.age
+fallback is asked for interactively):
+.PP
+.RS
+.nf
+$ ./scripts/decrypt.sh
+No age identity found at /home/alice/.age/keys.txt \(em will prompt for passphrase.
+Decrypting: ssh/id_ed25519 -> /home/alice/.ssh/id_ed25519
+[age prompts for the passphrase here]
+.fi
+.RE
+.PP
+Force re-decryption of everything, ignoring timestamps:
+.PP
+.RS
+.nf
+$ FORCE=true ./scripts/decrypt.sh
+.fi
+.RE
+.PP
+Same effect, through
+.BR just (1):
+.PP
+.RS
+.nf
+$ just decrypt
+.fi
+.RE
+.SH SEE ALSO
+.BR dots\-setup (1),
+.BR dots\-encrypt (1),
+.BR dots\-verify (1),
+.BR age (1)
