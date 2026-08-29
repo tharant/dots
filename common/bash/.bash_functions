@@ -1,17 +1,45 @@
 #!/bin/bash
 
-# hide dotfiles in finder
-hide-dots() {
-	defaults write com.apple.finder AppleShowAllFiles FALSE && killall -KILL Finder
-}
-
-# show dotfiles in finder
-show-dots() {
-	defaults write com.apple.finder AppleShowAllFiles TRUE && killall -KILL Finder
-}
-
 pwg() {
-	sf-pwgen --algorithm alphanumeric --count 1 --length 33
+	# Portable 32-char alphanumeric password (was macOS-only sf-pwgen)
+	LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32
+	echo
+}
+
+# Copy stdin to the system clipboard (macOS pbcopy, clip.exe under WSL,
+# wl-copy/xclip elsewhere); warns and fails if no clipboard tool exists.
+clip-copy() {
+	if command -v pbcopy &>/dev/null; then
+		pbcopy
+	elif grep -qi microsoft /proc/version 2>/dev/null; then
+		if [[ -x /mnt/c/Windows/System32/clip.exe ]]; then
+			/mnt/c/Windows/System32/clip.exe
+		else
+			echo "clip-copy: /mnt/c/Windows/System32/clip.exe not found" 1>&2
+			return 1
+		fi
+	elif command -v wl-copy &>/dev/null; then
+		wl-copy
+	elif command -v xclip &>/dev/null; then
+		xclip -selection clipboard -in
+	else
+		echo "clip-copy: no clipboard tool found (pbcopy, clip.exe, wl-copy, xclip)" 1>&2
+		return 1
+	fi
+}
+
+# Open a URL/file with the first available opener
+open-url() {
+	if command -v open &>/dev/null; then
+		open "$1"
+	elif command -v wslview &>/dev/null; then
+		wslview "$1"
+	elif command -v xdg-open &>/dev/null; then
+		xdg-open "$1"
+	else
+		echo "open-url: no opener found (open, wslview, xdg-open)" 1>&2
+		return 1
+	fi
 }
 
 # simple command line calculator
@@ -250,16 +278,19 @@ title-dir() {
 open-magazine() {
    local url
    url=$(maginfo "$1" | grep "url:" | awk '{print $2}')
-   open "$url"
+   open-url "$url"
 }
 
 diskspeedtest() {
   local st
   st=$(now)
+  # gdd (coreutils) on macOS, plain dd everywhere else
+  local dd_bin
+  dd_bin="$(command -v gdd 2>/dev/null || command -v dd 2>/dev/null)"
   local wr
-  wr=$(gdd if=/dev/zero of=file bs=4k count=1024k conv=fdatasync 2>&1 | grep copied | cut -d " " -f10-)
+  wr=$("${dd_bin}" if=/dev/zero of=file bs=4k count=1024k conv=fdatasync 2>&1 | grep copied | cut -d " " -f10-)
   local rd
-  rd=$(gdd if=file of=/dev/null bs=4k count=1024k conv=fdatasync 2>&1 | grep copied | cut -d " " -f10-)
+  rd=$("${dd_bin}" if=file of=/dev/null bs=4k count=1024k conv=fdatasync 2>&1 | grep copied | cut -d " " -f10-)
   rm -f file
   local ed
   ed=$(now)
@@ -274,8 +305,8 @@ fix_header() {
   # get the header, convert space and fwd slash to underscore, then convert to lowercase
   head -n1 "${out}" \
     | sed -e 's/ /_/g' -e 's#/#_#g' -e 's/-/_/g' -e 's/?//g' -e 's/\$//g' -e 's/</_less_than_/g' -e 's/>/_greater_than_/g' \
-    | gtr '[:upper:]' '[:lower:]' \
-    | gtr -s "_" "_"
+    | tr '[:upper:]' '[:lower:]' \
+    | tr -s "_" "_"
   sed 1d "${out}"
 }
 
@@ -322,11 +353,19 @@ use-kubeconfig () {
 
 
 mycli () {
+  # type -P skips this function and finds the real binary
+  local mycli_bin
+  mycli_bin="$(type -P mycli)" || { echo "mycli: not installed" 1>&2; return 1; }
   if [[ $# -eq 0 ]]; then
-    /home/linuxbrew/.linuxbrew/bin/mycli;
+    "${mycli_bin}";
   else
-    /home/linuxbrew/.linuxbrew/bin/mycli --defaults-group-suffix "$1";
+    "${mycli_bin}" --defaults-group-suffix "$1";
   fi
 }
 
-alias shortsha='git rev-parse --short=8 HEAD |pbcopy; git rev-parse --short=8 HEAD'
+shortsha() {
+  local sha
+  sha="$(git rev-parse --short=8 HEAD)" || return 1
+  printf '%s\n' "${sha}" | clip-copy
+  echo "${sha}"
+}
