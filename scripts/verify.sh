@@ -89,7 +89,7 @@ check_symlinks "$REPO_DIR/$PLATFORM" "$PLATFORM"
 
 section "File permissions"
 if [[ -d "$HOME/.ssh" ]]; then
-    ssh_perms="$(stat -f '%Lp' "$HOME/.ssh" 2>/dev/null || stat -c '%a' "$HOME/.ssh" 2>/dev/null)"
+    ssh_perms="$(stat -c '%a' "$HOME/.ssh" 2>/dev/null || stat -f '%Lp' "$HOME/.ssh" 2>/dev/null)"
     if [[ "$ssh_perms" == "700" ]]; then
         pass "$HOME/.ssh/ is 700"
     else
@@ -98,7 +98,7 @@ if [[ -d "$HOME/.ssh" ]]; then
 
     while IFS= read -r -d '' keyfile; do
         fname="$(basename "$keyfile")"
-        perms="$(stat -f '%Lp' "$keyfile" 2>/dev/null || stat -c '%a' "$keyfile" 2>/dev/null)"
+        perms="$(stat -c '%a' "$keyfile" 2>/dev/null || stat -f '%Lp' "$keyfile" 2>/dev/null)"
         if [[ "$perms" == "600" ]]; then
             pass "$HOME/.ssh/$fname is 600"
         else
