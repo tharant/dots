@@ -77,7 +77,7 @@ Platform overrides must **not** be conditionals in `common/`. Instead, each plat
 
 ## Secrets
 
-Secrets are hybrid-encrypted with both a passphrase and age recipient keys (`age -p -R recipients.txt`). Either can decrypt:
+Each secret is stored as two age artifacts encrypting the same plaintext — `X.age` (age recipient key, from `secrets/recipients.txt`) and `X.phrase.age` (passphrase fallback) — since no age CLI can combine both in one file. Either can decrypt:
 
 - **Fresh machine (no age key):** passphrase prompt
 - **Established machine:** age identity at `~/.age/keys.txt` — no prompts

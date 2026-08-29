@@ -26,7 +26,7 @@ dots/
 ├── alpine/          # Alpine overrides → .bashrc.platform.d/alpine.sh (new package)
 ├── wsl/             # WSL2 overrides   → .bashrc.platform.d/wsl.sh (new package)
 ├── bsd/             # BSD overrides    → .bashrc.platform.d/bsd.sh, .bash_profile
-├── secrets/         # Encrypted files (*.age only, hybrid encrypted)
+├── secrets/         # Encrypted files (dual artifacts *.age + *.phrase.age)
 │   ├── recipients.txt  # age public key(s) for encryption (public, safe to commit)
 │   ├── ssh/         # Encrypted SSH private keys
 │   └── tokens/      # Encrypted API tokens, credentials
@@ -34,8 +34,8 @@ dots/
 │   ├── setup.sh     # Bootstrap (curl-able): pkg_install dispatcher, platform/distro/env
 │   │                #   detection (macos/linux/bsd + alpine + wsl layers), decrypt, stow
 │   ├── verify.sh    # Symlink + permissions health check (stow-ignore aware)
-│   ├── encrypt.sh   # Encrypt a file (hybrid: passphrase + age key)
-│   └── decrypt.sh   # Decrypt secrets (tries age key, falls back to passphrase)
+│   ├── encrypt.sh   # Encrypt a file (age key + passphrase copies)
+│   └── decrypt.sh   # Decrypt secrets (age key if present, else passphrase)
 ├── docs/            # Reference documentation
 ├── Justfile         # Task runner (just) for common operations
 ├── .editorconfig    # Editor formatting settings
@@ -60,14 +60,19 @@ Platform files load in every interactive shell (login or not); `common/bash/.bas
 
 Each subdirectory inside `common/` and the platform dirs is a Stow package. Files are mirrored to `$HOME` via symlinks. For example, `common/bash/.bashrc` symlinks to `~/.bashrc`. The `--no-folding` flag is used to avoid replacing existing directories with symlinks (and is kept alongside `--delete` when unstowing). `setup.sh` stows `common/` + the platform dir + distro/env dirs (see platform layer above), sets `core.hooksPath .githooks` so the shellcheck pre-commit hook is actually installed, and pulls with `--autostash` when the working tree is dirty (e.g. after a prior `--adopt`).
 
-### Secrets: Hybrid Encryption with age
+### Secrets: Dual age Artifacts
 
-Secrets are encrypted with **both** a passphrase and an age recipient key using `age -p -R recipients.txt`. Either method can decrypt:
+Secrets are stored as **two age artifacts per secret**, each encrypting the same plaintext:
 
-- **Fresh machine (no keys):** passphrase prompt — enables `curl | bash` bootstrap
+- `X.age` — encrypted to the recipients in `secrets/recipients.txt`
+- `X.phrase.age` — encrypted with a passphrase
+
+**Why two files:** the age file format supports combining recipient stanzas with a passphrase stanza, but no CLI (age or rage) can produce such a file — `age -p -R` is rejected. Dual artifacts replicate the "either unlocks it" property with plain age:
+
 - **Established machine:** age identity at `~/.age/keys.txt` — no prompts needed
+- **Fresh machine (no keys):** passphrase prompt — enables `curl | bash` bootstrap
 
-The decrypt script (`scripts/decrypt.sh`) auto-detects which method to use. Target locations are mapped by subdirectory: `secrets/ssh/*` → `~/.ssh/`, `secrets/tokens/*` → `~/.config/tokens/`.
+The decrypt script (`scripts/decrypt.sh`) tries the age identity first and falls back to the passphrase copy. Legacy single-artifact secrets (passphrase-only `X.age`) still decrypt. Target locations are mapped by subdirectory: `secrets/ssh/*` → `~/.ssh/`, `secrets/tokens/*` → `~/.config/tokens/`.
 
 ### New Machine Bootstrap
 
@@ -88,7 +93,7 @@ just restow                   # Re-stow all packages (after git pull)
 just adopt                    # Adopt existing files into repo, then stow
 just unstow                   # Remove all managed symlinks
 just verify                   # Run verification checks
-just encrypt <file>           # Hybrid-encrypt a file
+just encrypt <file>           # Encrypt a file (age key + passphrase copies)
 just decrypt                  # Decrypt all secrets
 
 # Dev
@@ -108,7 +113,7 @@ Scripts can also be called directly:
 ./scripts/setup.sh --restow                     # Re-stow all packages (after git pull)
 ./scripts/setup.sh --adopt                      # Adopt existing files into repo, then stow
 ./scripts/setup.sh --unstow                     # Remove all managed symlinks
-./scripts/encrypt.sh <plaintext> <output.age>   # Hybrid-encrypt a file
+./scripts/encrypt.sh <plaintext> <output.age>   # Encrypt a file (writes X.age + X.phrase.age)
 ./scripts/decrypt.sh                            # Decrypt all secrets
 ```
 
