@@ -1,8 +1,11 @@
 # Plaintext secrets — never commit these
+# (id_* matches key files at any name, e.g. id_ecdsa_qemu; keep *.pub out)
 id_rsa
 id_ed25519
 id_ecdsa
 id_dsa
+id_*
+!id_*.pub
 *.pem
 *.key
 *.secret
@@ -27,3 +30,7 @@ Thumbs.db
 .viminfo
 .netrwhist
 *~
+# vim theme choice is per-machine (written at runtime through the stow symlink)
+common/vim/.vim/.theme
+tags
+doc/tags
