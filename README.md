@@ -53,7 +53,7 @@ dots/
 ├── alpine/            # Alpine overrides → .bashrc.platform.d/alpine.sh
 ├── wsl/               # WSL2 overrides   → .bashrc.platform.d/wsl.sh
 ├── bsd/               # BSD overrides    → .bashrc.platform.d/bsd.sh
-├── secrets/           # Encrypted files (*.age), hybrid-encrypted
+├── secrets/           # Encrypted files (dual artifacts: *.age + *.phrase.age)
 └── scripts/           # setup.sh, encrypt.sh, decrypt.sh, verify.sh
 ```
 
