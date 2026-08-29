@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 # Decrypt all *.age files from secrets/ to their target locations.
 # Tries age identity key first, falls back to passphrase prompt.
@@ -24,10 +25,14 @@ else
 fi
 
 # Mapping: secrets/subdir/filename.age -> target location
-declare -A TARGET_MAP=(
-    ["ssh"]="$HOME/.ssh"
-    ["tokens"]="$HOME/.config/tokens"
-)
+# (a case statement instead of an assoc array keeps this bash 3.2 compatible)
+target_dir_for() {
+    case "$1" in
+        ssh) echo "$HOME/.ssh" ;;
+        tokens) echo "$HOME/.config/tokens" ;;
+        *) echo "" ;;
+    esac
+}
 
 decrypt_file() {
     local age_file="$1"
@@ -36,7 +41,8 @@ decrypt_file() {
     local filename="${rel_path#*/}"
     filename="${filename%.age}"
 
-    local target_dir="${TARGET_MAP[$subdir]:-}"
+    local target_dir
+    target_dir="$(target_dir_for "$subdir")"
     if [[ -z "$target_dir" ]]; then
         echo "Warning: No target mapping for subdir '$subdir', skipping $rel_path"
         return
@@ -55,11 +61,9 @@ decrypt_file() {
     echo "Decrypting: $rel_path -> $target"
     age -d "${AGE_ARGS[@]}" -o "$target" "$age_file"
 
-    # Set restrictive permissions for SSH keys
-    if [[ "$subdir" == "ssh" ]]; then
-        chmod 600 "$target"
-        chmod 700 "$target_dir"
-    fi
+    # Set restrictive permissions for keys and tokens alike
+    chmod 600 "$target"
+    chmod 700 "$target_dir"
 }
 
 # Find and decrypt all .age files

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 # Encrypt a file using both passphrase and age recipient key (hybrid mode).
 # Usage: ./scripts/encrypt.sh <plaintext-file> [output.age]
@@ -22,30 +23,36 @@ if [[ ! -f "$INPUT" ]]; then
 fi
 
 if ! command -v age &>/dev/null; then
-    echo "Error: age is not installed. Install with: brew install age / apt install age / pkg install age"
+    echo "Error: age is not installed. Install with: brew / apt / apk / pkg install age"
     exit 1
 fi
 
 # Reverse TARGET_MAP: source directory -> secrets subdirectory
-declare -A REVERSE_MAP=(
-    ["$HOME/.ssh"]="ssh"
-    ["$HOME/.config/tokens"]="tokens"
-)
-
+# (a case statement instead of an assoc array keeps this bash 3.2 compatible)
 # Determine output path
 if [[ $# -ge 2 ]]; then
     OUTPUT="$2"
 else
     # Auto-infer from input path
     INPUT_ABS="$(cd "$(dirname "$INPUT")" && pwd)/$(basename "$INPUT")"
-    OUTPUT=""
-    for src_dir in "${!REVERSE_MAP[@]}"; do
-        if [[ "$INPUT_ABS" == "$src_dir"/* ]]; then
-            rel="${INPUT_ABS#"$src_dir"/}"
-            OUTPUT="$REPO_DIR/secrets/${REVERSE_MAP[$src_dir]}/${rel}.age"
-            break
-        fi
-    done
+    sub_dir=""
+    rel=""
+    case "$INPUT_ABS" in
+        "$HOME"/.ssh/*)
+            sub_dir="ssh"
+            rel="${INPUT_ABS#"$HOME"/.ssh/}"
+            ;;
+        "$HOME"/.config/tokens/*)
+            sub_dir="tokens"
+            rel="${INPUT_ABS#"$HOME"/.config/tokens/}"
+            ;;
+    esac
+
+    if [[ -n "$sub_dir" ]]; then
+        OUTPUT="$REPO_DIR/secrets/$sub_dir/$rel.age"
+    else
+        OUTPUT=""
+    fi
 
     if [[ -z "$OUTPUT" ]]; then
         read -rp "Could not infer target. Enter output path: " OUTPUT
@@ -90,8 +97,13 @@ fi
 
 echo "Verification passed."
 
-# Auto-commit
+# Auto-commit (non-fatal: a missing git identity on a fresh machine should not
+# fail the script after the .age file has already been written)
 REL_OUTPUT="${OUTPUT#"$REPO_DIR"/}"
-git -C "$REPO_DIR" add "$OUTPUT"
-git -C "$REPO_DIR" commit -m "Add encrypted secret: $REL_OUTPUT"
-echo "Committed: $REL_OUTPUT"
+if ! git -C "$REPO_DIR" add "$OUTPUT"; then
+    echo "Warning: could not stage $REL_OUTPUT — commit manually."
+elif ! git -C "$REPO_DIR" commit -m "Add encrypted secret: $REL_OUTPUT"; then
+    echo "Warning: file encrypted, but commit failed — commit manually."
+else
+    echo "Committed: $REL_OUTPUT"
+fi
