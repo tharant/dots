@@ -1,0 +1,296 @@
+# shellcheck shell=bash
+# direnv stdlib extension: managed runtimes via the `runtimes` CLI
+# (~/bin/runtimes). Sourced into every .envrc evaluation from
+# $DIRENV_CONFIG/direnvrc; the use_* helpers intentionally shadow the
+# stdlib's virtualenv-flavoured use_python.
+#
+# Evaluation contract: helpers only read local files (.runtimesrc,
+# .runtimes.lock) and call `runtimes ensure` / `runtimes path` — both fast,
+# local-only. No network, no foreground installs: DIRENV_WARN_TIMEOUT only
+# warns, it never kills, so a hung evaluation hangs every prompt. Background
+# installs write .runtimes.lock atomically on completion; `watch_file` on
+# .runtimesrc + .runtimes.lock makes direnv apply the new runtimes at the
+# next prompt.
+#
+# All user-facing output goes through log_status/log_error (stderr) — stdout
+# is the environment dump direnv evaluates and must stay clean.
+# Bash-3.2-safe: no associative arrays, no mapfile, no ${var,,}.
+
+# Locate the `runtimes` CLI: the eval environment inherits the invoking
+# shell's PATH, but fall back to the stowed ~/bin location if it differs.
+_runtimes_cli() {
+    local cli
+    if cli=$(command -v runtimes 2>/dev/null); then
+        printf '%s\n' "$cli"
+        return 0
+    fi
+    if [ -x "$HOME/bin/runtimes" ]; then
+        printf '%s\n' "$HOME/bin/runtimes"
+        return 0
+    fi
+    return 1
+}
+
+# Lock file path for the current context: use_runtimes records the directory
+# holding .runtimesrc; standalone use_python/use_node/use_java calls default
+# to $PWD.
+_runtimes_lock() {
+    printf '%s\n' "${_runtimes_lock_dir:-$PWD}/.runtimes.lock"
+}
+
+# Expand a leading ~ (defensive: lock paths are absolute, but a store rooted
+# at $HOME could be written with a tilde).
+_runtimes_home() {
+    local path="$1" rest
+    rest=${path#'~'}
+    if [ "$rest" != "$path" ]; then
+        path="$HOME$rest"
+    fi
+    printf '%s\n' "$path"
+}
+
+# Print "<resolved>" and "<path>" (two lines) from the first .runtimes.lock
+# entry matching name+spec; return 1 when the lock is missing or has no
+# matching entry. Lock line format: <name> <spec> <resolved> <path>
+_runtimes_lock_lookup() {
+    local name="$1" spec="$2" lock="$3"
+    local lname lspec lresolved lpath
+    [ -r "$lock" ] || return 1
+    while read -r lname lspec lresolved lpath || [ -n "${lname:-}" ]; do
+        if [ "$lname" = "$name" ] && [ "$lspec" = "$spec" ]; then
+            printf '%s\n%s\n' "$lresolved" "$(_runtimes_home "$lpath")"
+            return 0
+        fi
+    done < "$lock"
+    return 1
+}
+
+# Fallback for a missing lock entry: ask the store. `runtimes path` prints
+# the concrete bin dir (python, node) or JAVA_HOME (java); exit 1 when the
+# runtime is not installed.
+_runtimes_path() {
+    local cli out
+    cli=$(_runtimes_cli) || return 1
+    out=$("$cli" path "$1" "$2" 2>/dev/null) || return 1
+    printf '%s\n' "$(_runtimes_home "$out")"
+}
+
+# Report a runtime that is not in the store yet. Evaluation degrades to the
+# system runtime, never fails; if a .runtimesrc declared the runtime,
+# `runtimes ensure` is installing it detached and the next reload applies it.
+_runtimes_missing() {
+    local name="$1" spec="$2" cli
+    if cli=$(_runtimes_cli); then
+        log_status "$name $spec not installed yet — system $name stays active; a running background install applies at the next reload"
+    else
+        log_error "runtimes command not found; cannot manage $name $spec (run 'just setup')"
+    fi
+}
+
+# use_runtimes [file] — apply the runtimes declared in a .runtimesrc.
+# Finds .runtimesrc in $PWD by default (a directory argument is accepted),
+# runs `runtimes ensure` first (a milliseconds-fast no-op when the lock
+# already satisfies the rc, otherwise one detached install + status line),
+# then applies whatever the lock resolves to.
+use_runtimes() {
+    local rc="${1:-$PWD/.runtimesrc}"
+    if [ -d "$rc" ]; then
+        rc="$rc/.runtimesrc"
+    fi
+    if [ ! -r "$rc" ]; then
+        log_error "use_runtimes: no .runtimesrc found at $rc"
+        return 0
+    fi
+    local dir
+    case "$rc" in
+        */*) dir=${rc%/*} ;;
+        *) dir="." ;;
+    esac
+    _runtimes_lock_dir="$dir"
+
+    # Reload triggers: the rc itself (spec edits) and the lock (background
+    # install completion) — direnv re-evaluates at the next prompt.
+    watch_file "$rc"
+    watch_file "$dir/.runtimes.lock"
+
+    # Ensure first: milliseconds-fast when satisfied, otherwise a detached
+    # install is kicked off (its status line goes to stderr) and ensure
+    # exits 0 — evaluation never blocks or breaks on it.
+    local cli
+    if cli=$(_runtimes_cli); then
+        if ! "$cli" ensure "$dir" >/dev/null; then
+            log_error "runtimes ensure failed for $dir"
+        fi
+    else
+        log_error "runtimes command not found; managed runtimes unavailable (run 'just setup')"
+    fi
+
+    # Apply line by line. Comments (full-line or trailing) and blank lines
+    # are skipped; runtimes still installing degrade per-runtime.
+    local line name spec
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=${line%%'#'*}
+        line=${line#"${line%%[![:space:]]*}"}
+        line=${line%"${line##*[![:space:]]}"}
+        if [ -z "$line" ]; then
+            continue
+        fi
+        name=${line%%[[:space:]]*}
+        spec=${line#"$name"}
+        spec=${spec#"${spec%%[![:space:]]*}"}
+        case "$spec" in
+            *[[:space:]]*)
+                log_error "runtimesrc: '$line' — expected '<name> <version>'"
+                continue
+                ;;
+        esac
+        use_runtime "$name" "$spec"
+    done < "$rc"
+}
+
+# use_runtime <name> <spec> — thin dispatcher to the per-runtime helper.
+use_runtime() {
+    local name="${1:-}"
+    case "$name" in
+        python) use_python "${2:-}" ;;
+        node) use_node "${2:-}" ;;
+        java) use_java "${2:-}" ;;
+        *) log_error "use_runtime: unknown runtime '$name' (expected python, node or java)" ;;
+    esac
+}
+
+# use_python <spec> — uv-managed interpreter (any uv-resolvable spec). Wires
+# the interpreter's bin dir from the lock (or `runtimes path`), exports
+# UV_PYTHON so every uv invocation targets the project interpreter, and
+# creates + activates a project-local .venv. Venv creation is local and
+# sub-second, so it happens during evaluation; the interpreter download
+# happens only via `runtimes ensure`, detached.
+use_python() {
+    local spec="${1:-}"
+    if [ -z "$spec" ]; then
+        log_error "use_python: missing version spec (e.g. use_python 3.12)"
+        return 0
+    fi
+    local entry resolved bin
+    if entry=$(_runtimes_lock_lookup python "$spec" "$(_runtimes_lock)"); then
+        resolved=${entry%%$'\n'*}
+        bin="${entry#*$'\n'}/bin"
+    else
+        resolved="$spec"
+        bin=$(_runtimes_path python "$spec") || bin=""
+    fi
+    if [ -z "$bin" ]; then
+        _runtimes_missing python "$spec"
+        return 0
+    fi
+    PATH_add "$bin"
+    export UV_PYTHON="$spec"
+
+    # Project venv: create once, only when the project declared python in
+    # .runtimesrc. UV_NO_PROJECT keeps uv from walking up into a parent
+    # pyproject.toml; --seed gives the venv pip without a project.
+    local uv_bin
+    uv_bin=$(command -v uv 2>/dev/null) || uv_bin="$HOME/.local/bin/uv"
+    if [ ! -d "$PWD/.venv" ] && [ -x "$uv_bin" ] \
+            && grep -Eq '^[[:space:]]*python([[:space:]]|#)' "$PWD/.runtimesrc" 2>/dev/null; then
+        log_status "use_python: creating .venv (python $resolved)"
+        if ! UV_NO_PROJECT=1 "$uv_bin" venv --python "$resolved" --seed "$PWD/.venv" >/dev/null; then
+            log_error "use_python: uv venv failed for python $resolved"
+            return 0
+        fi
+    fi
+    if [ -d "$PWD/.venv" ]; then
+        export VIRTUAL_ENV="$PWD/.venv"
+        PATH_add "$VIRTUAL_ENV/bin"
+        watch_file "$PWD/.venv/pyvenv.cfg"
+    fi
+}
+
+# use_node <spec> — fnm-managed node (a major like 22 resolves to a concrete
+# vX.Y.Z at ensure time; the lock carries it). PATH points straight at the
+# locked installation's bin dir. Never `eval "$(fnm env ...)"` in an
+# evaluation — every eval would mint a multishell symlink that fnm never
+# garbage-collects.
+use_node() {
+    local spec="${1:-}"
+    if [ -z "$spec" ]; then
+        log_error "use_node: missing version spec (e.g. use_node 22)"
+        return 0
+    fi
+    local entry bin
+    if entry=$(_runtimes_lock_lookup node "$spec" "$(_runtimes_lock)"); then
+        bin="${entry#*$'\n'}/bin"
+    else
+        bin=$(_runtimes_path node "$spec") || bin=""
+    fi
+    if [ -z "$bin" ]; then
+        _runtimes_missing node "$spec"
+        return 0
+    fi
+    PATH_add "$bin"
+}
+
+# use_java <spec> — sdkman-managed JDK (a major like 17 resolves to the
+# latest <major>.x.y-tem at ensure time; exact candidate IDs also work).
+# JAVA_HOME comes from the concrete candidate dir in the lock — never
+# sdkman's `current` symlink (cross-project interference), and never
+# sourcing sdkman-init.sh in an evaluation (bash-4 requirement).
+use_java() {
+    local spec="${1:-}"
+    if [ -z "$spec" ]; then
+        log_error "use_java: missing version spec (e.g. use_java 17)"
+        return 0
+    fi
+    local entry home
+    if entry=$(_runtimes_lock_lookup java "$spec" "$(_runtimes_lock)"); then
+        home=${entry#*$'\n'}
+    else
+        home=$(_runtimes_path java "$spec") || home=""
+    fi
+    if [ -z "$home" ]; then
+        _runtimes_missing java "$spec"
+        return 0
+    fi
+    export JAVA_HOME="$home"
+    PATH_add "$JAVA_HOME/bin"
+}
+
+# use_template <name> — scaffold $PWD from a repo template via
+# `runtimes template`. Refuses when the directory holds anything besides
+# direnv artifacts (.envrc, .runtimesrc, .runtimes.lock, .direnv/): the
+# guard makes reloads idempotent, since evaluation re-runs on every prompt;
+# the steady-state skip after a successful expansion is a normal status,
+# not an error. Overwriting requires `runtimes template <name> --force`.
+# {{VAR}} substitution inside the template reads env vars exported earlier
+# in the same .envrc.
+use_template() {
+    local name="${1:-}"
+    if [ -z "$name" ]; then
+        log_error "use_template: missing template name"
+        return 0
+    fi
+    local entry dirty=""
+    for entry in * .[!.]* .??*; do
+        if [ ! -e "$entry" ]; then
+            continue
+        fi
+        case "$entry" in
+            .envrc|.runtimesrc|.runtimes.lock|.direnv) ;;
+            *) dirty="$entry"; break ;;
+        esac
+    done
+    if [ -n "$dirty" ]; then
+        log_status "use_template $name: '$PWD' is not empty ('$dirty' present) — skipping; 'runtimes template $name --force' overwrites"
+        return 0
+    fi
+    local cli
+    if ! cli=$(_runtimes_cli); then
+        log_error "runtimes command not found; template expansion unavailable"
+        return 0
+    fi
+    if ! "$cli" template "$name" "$PWD" >/dev/null; then
+        log_error "runtimes template $name failed"
+        return 0
+    fi
+    log_status "use_template: expanded '$name' into $PWD"
+}
