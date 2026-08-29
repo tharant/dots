@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Sensible Bash - An attempt at saner Bash defaults
 # Maintainer: mrzool <http://mrzool.cc>
 # Repository: https://github.com/mrzool/bash-sensible
@@ -59,12 +60,12 @@ shopt -s histappend
 # Save multi-line commands as one command
 shopt -s cmdhist
 
-# Record each line as it gets issued
-PROMPT_COMMAND='history -a'
+# Appending to the history file on each prompt (PROMPT_COMMAND='history -a')
+# is defined once in ~/.bashrc
 
 # Huge history. Doesn't appear to slow things down, so why not?
 HISTSIZE=500000
-HISTFILESIZE=100000
+HISTFILESIZE=500000
 
 # Avoid duplicate entries
 HISTCONTROL="erasedups:ignoreboth"
