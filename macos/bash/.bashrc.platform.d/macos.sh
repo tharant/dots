@@ -34,4 +34,14 @@ show-dots() {
 	defaults write com.apple.finder AppleShowAllFiles TRUE && killall -KILL Finder
 }
 
+# macOS man(1) omits ~/.local/share/man from its default path — add it so the
+# dots manpages installed by `just man-install` (see docs/man/Makefile) resolve.
+# An explicit MANPATH *replaces* the default path, so preserve the existing
+# value; the empty element expands to the default path on macOS man and on
+# Linux man-db alike.
+case ":${MANPATH-}:" in
+  *":$HOME/.local/share/man:"*) ;;
+  *) export MANPATH="$HOME/.local/share/man:${MANPATH:+:$MANPATH}" ;;
+esac
+
 # Homebrew's bash 5 and the /etc/shells entry are handled by setup.sh.
