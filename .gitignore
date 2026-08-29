@@ -34,3 +34,4 @@ Thumbs.db
 common/vim/.vim/.theme
 tags
 doc/tags
+.claude/
