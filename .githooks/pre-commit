@@ -9,7 +9,7 @@ if ! command -v shellcheck &>/dev/null; then
   exit 0
 fi
 
-# Collect staged bash files (scripts + dotfiles).
+# Collect staged bash files (scripts, dotfiles, extensionless shims + direnvrc).
 # Portable loop instead of mapfile (bash 3.2 on macOS has no mapfile; it would
 # silently leave `files` empty).
 # Vendored third-party code (vim plugins, trueline) is shipped verbatim — skip it.
@@ -25,6 +25,9 @@ while IFS= read -r -d '' f; do
     */.bash_functions)        files+=("$f") ;;
     */.bash_sensible)         files+=("$f") ;;
     */.bash_linux)            files+=("$f") ;;
+    common/bin/bin/*)         files+=("$f") ;;
+    */direnvrc)               files+=("$f") ;;
+    */.envrc)                 files+=("$f") ;;
   esac
 done < <(git diff --cached --name-only -z --diff-filter=ACM)
 

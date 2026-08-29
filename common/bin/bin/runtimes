@@ -1,0 +1,635 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Runtime manager for .runtimesrc-driven projects — the CLI half of the direnv
+# integration (the .envrc half lives in ~/.config/direnv/direnvrc; authoring is
+# documented in docs/direnv-runtimes.md). Three backends, one resolution rule
+# each: python -> uv (uv python install/find), node -> fnm (fnm install,
+# majors resolved via fnm ls-remote), java -> sdkman (exact candidate IDs;
+# majors resolved via the sdkman version API — never `sdk list`, which forces
+# a pager). `ensure` is the direnv hot path: file reads only, installs run
+# detached (nohup + log + single-flight pid guard), and the project lock
+# (.runtimes.lock) is written via temp-file + rename so a project never sees a
+# half-applied environment. stdout is reserved for `path` output (consumed by
+# the direnvrc helpers); all human messaging goes to stderr. Portable: bash 3.2
+# (no arrays-as-maps, no mapfile, no case-folding), BusyBox userland; BSD has
+# no auto-install — ensure degrades to system runtimes via command -v.
+
+STATE_DIR="$HOME/.local/state/runtimes"
+LOG_DIR="$STATE_DIR/logs"
+PID_DIR="$STATE_DIR/pids"
+FNM_DIR="${FNM_DIR:-$HOME/.local/share/fnm}"
+UV_PYTHON_DIR="${UV_PYTHON_INSTALL_DIR:-$HOME/.local/share/uv/python}"
+SDKMAN_DIR="${SDKMAN_DIR:-$HOME/.sdkman}"
+
+# install_one() results (RESOLVED = concrete version, RPATH = store path)
+RESOLVED=""
+RPATH=""
+# lock_lookup() result (store path from the lock line)
+LOCK_PATH=""
+# read_runtimesrc() parse arrays (indexed, bash-3.2-safe under set -u)
+NAME_COUNT=0
+# worker results and pid-guard/tmp bookkeeping
+R_COUNT=0
+WORKER_PIDFILE=""
+LOCK_TMP=""
+
+# --- Helpers (info/warn/die -> stderr; stdout belongs to `path` alone) ---
+
+info() { echo -e "\033[1;34m==>\033[0m $*" >&2; }
+warn() { echo -e "\033[1;33m==> WARNING:\033[0m $*" >&2; }
+die()  { echo -e "\033[1;31m==> ERROR:\033[0m $*" >&2; exit 1; }
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: runtimes <command> [args]
+
+Manage project runtimes declared in .runtimesrc (python -> uv, node -> fnm,
+java -> sdkman). Companion CLI to the direnv helpers in direnvrc; stdout is
+reserved for `path` output, all human messaging goes to stderr.
+
+Commands:
+  ensure [dir]               Satisfy every runtime in <dir>/.runtimesrc
+                             (default: cwd). Millisecond no-op when the lock
+                             already covers every entry; otherwise kicks off a
+                             detached install (log:
+                             ~/.local/state/runtimes/logs/<hash>.log) and
+                             exits 0 so .envrc evaluation never hangs.
+  install <name> <version>    Foreground install of one runtime with visible
+                             progress. Spec per backend: python any
+                             uv-resolvable spec, node major or vX.Y.Z,
+                             java major or exact sdkman candidate ID.
+  status                     List installed runtimes per backend + store paths.
+  path <name> <spec> [dir]   Print the runtime's bin dir (python, node) or
+                             JAVA_HOME (java) from <dir>/.runtimes.lock
+                             (default: cwd). Exit 1 when not satisfied.
+  template <name> [--force] [dest]
+                             Expand repo template <name> into <dest> (default:
+                             cwd), substituting {{VAR}} tokens from the
+                             manifest's substitute list; refuses to overwrite
+                             existing files unless --force.
+  -h | --help                Show this help.
+
+Stores: uv ~/.local/share/uv/python, fnm $FNM_DIR (default
+~/.local/share/fnm), sdkman ~/.sdkman/candidates.
+BSD: configs deploy but runtime auto-install is unsupported; ensure falls
+back to system runtimes (command -v) and exits 0.
+EOF
+    exit 0
+}
+
+dir_hash() {
+    # Stable short id for a directory path (log/pid file names).
+    if command -v sha256sum >/dev/null 2>&1; then
+        printf '%s' "$1" | sha256sum | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        printf '%s' "$1" | shasum -a 256 | awk '{print $1}'
+    else
+        printf '%s' "$1" | cksum | awk '{print $1}'
+    fi
+}
+
+fetch() {
+    # fetch <url> -> stdout. curl first, wget (incl. busybox) as fallback.
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$1"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- "$1"
+    else
+        die "need curl or wget to fetch $1"
+    fi
+}
+
+latest_version() {
+    # stdin: candidate ids (vX.Y.Z, N.N.N-suf); stdout: the highest one.
+    # Numeric compare of the first four [-+.]-separated fields; suffixes like
+    # "-tem" compare as 0 and never win a tie, so exact ids are preferred.
+    awk '
+        function num(x) { return x + 0 }
+        {
+            t = $0
+            sub(/^v/, "", t)
+            split(t, a, "[-+.]")
+            if (!have) {
+                have = 1; best = $0
+                for (i = 1; i <= 4; i++) bv[i] = num(a[i])
+                next
+            }
+            for (i = 1; i <= 4; i++) {
+                if (num(a[i]) > bv[i]) {
+                    best = $0
+                    for (j = 1; j <= 4; j++) bv[j] = num(a[j])
+                    break
+                }
+                if (num(a[i]) < bv[i]) break
+            }
+        }
+        END { if (have) print best }
+    '
+}
+
+is_musl() { ldd --version 2>&1 | grep -q musl; }
+
+resolve_symlinks() {
+    # Follow symlinks without readlink -f (absent on macOS/BSD); $0 is
+    # ~/bin/runtimes -> repo/common/bin/bin/runtimes when stowed.
+    local p=$1 target
+    while [ -L "$p" ]; do
+        target=$(readlink "$p")
+        case $target in
+            /*) p=$target ;;
+            *)  p=$(dirname "$p")/$target ;;
+        esac
+    done
+    printf '%s\n' "$p"
+}
+
+SELF_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+# common/bin/bin/runtimes -> repo root is three levels up (bin -> bin -> common).
+REPO_ROOT="$(cd "$(dirname "$(resolve_symlinks "$SELF_PATH")")/../../.." && pwd)"
+TEMPLATES_DIR="$REPO_ROOT/templates"
+
+read_runtimesrc() {
+    # read_runtimesrc <file> -> NAME[]/SPEC[] (parallel, indexed by NAME_COUNT).
+    NAME=(); SPEC=(); NAME_COUNT=0
+    local name spec rest
+    # `|| [ -n "$name" ]` handles a final line without a trailing newline.
+    while read -r name spec rest || [ -n "$name" ]; do
+        [ -n "$name" ] || continue
+        case $name in '#'*) continue ;; esac
+        if [ -z "$spec" ]; then
+            warn "runtimesrc: '$name' needs a version spec (skipped)"
+            continue
+        fi
+        NAME[NAME_COUNT]=$name
+        SPEC[NAME_COUNT]=$spec
+        NAME_COUNT=$((NAME_COUNT + 1))
+    done < "$1"
+}
+
+lock_lookup() {
+    # lock_lookup <name> <spec> <lockfile> -> LOCK_PATH; 0 if found. Lock
+    # lines are "<name> <spec> <resolved> <absolute store path>" — the path
+    # is everything from field 4 (spaces never appear in store paths, but the
+    # cut is greedy anyway).
+    #
+    # A lock file can be committed into a cloned repo, so its path field is
+    # untrusted input: only a path inside the backend's store root is
+    # applied. A rejected entry reads as "not satisfied" — `ensure` re-runs
+    # the install and rewrites the lock, `path` reports it — so a crafted
+    # lock can never prepend an arbitrary directory to PATH.
+    LOCK_PATH=""
+    local line root
+    [ -r "$3" ] || return 1
+    line=$(awk -v n="$1" -v s="$2" '$1 == n && $2 == s { print }' "$3") || return 1
+    [ -n "$line" ] || return 1
+    LOCK_PATH=$(printf '%s\n' "$line" | cut -d' ' -f4-)
+    [ -n "$LOCK_PATH" ] || return 1
+    case $1 in
+        python) root=$UV_PYTHON_DIR ;;
+        node)   root="$FNM_DIR/node-versions" ;;
+        java)   root="$SDKMAN_DIR/candidates" ;;
+        *)      return 1 ;;
+    esac
+    case $LOCK_PATH in
+        "$root"/*) ;;
+        *)  return 1 ;;
+    esac
+    case $LOCK_PATH in
+        *"/.."*) return 1 ;;
+    esac
+    return 0
+}
+
+claim_guard() {
+    # claim_guard <pidfile> -> 0 if we own the single-flight slot, 1 if held.
+    # noclobber open is the atomic test-and-set; a stale marker whose pid is
+    # dead (reboot, killed install) is reclaimed.
+    local pidfile=$1 pid
+    if (set -o noclobber; printf '%s\n' "$$" > "$pidfile") 2>/dev/null; then
+        return 0
+    fi
+    pid=$(cat "$pidfile" 2>/dev/null) || pid=""
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+    rm -f "$pidfile"
+    (set -o noclobber; printf '%s\n' "$$" > "$pidfile") 2>/dev/null
+}
+
+cleanup_worker() {
+    if [ -n "$WORKER_PIDFILE" ]; then rm -f "$WORKER_PIDFILE"; fi
+    if [ -n "$LOCK_TMP" ]; then rm -f "$LOCK_TMP"; fi
+    return 0
+}
+
+install_one() {
+    # install_one <name> <spec> -> RESOLVED + RPATH. Unknown names warn and
+    # leave RESOLVED empty (caller decides); backend failures die so the
+    # worker never writes a partial lock.
+    RESOLVED=""; RPATH=""
+    case $1 in
+        python) backend_python "$2" ;;
+        node)   backend_node "$2" ;;
+        java)   backend_java "$2" ;;
+        *)      warn "unknown runtime '$1' (supported: python, node, java)" ;;
+    esac
+}
+
+# --- Backends ---
+
+backend_python() {
+    local spec=$1 found dir
+    command -v uv >/dev/null 2>&1 || die "uv not installed (setup.sh, or: \
+curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh)"
+    # uv python install is idempotent and atomic on its own side (staging +
+    # rename inside UV_PYTHON_INSTALL_DIR).
+    UV_NO_PROJECT=1 uv python install "$spec" >&2
+    found=$(UV_NO_PROJECT=1 uv python find "$spec" 2>/dev/null) \
+        || die "uv could not resolve python $spec after install"
+    dir=$(dirname "$(dirname "$found")")
+    RESOLVED=$("$found" -c 'import platform; print(platform.python_version())' 2>/dev/null) \
+        || RESOLVED=$spec
+    RPATH=$dir
+}
+
+backend_node() {
+    local spec=$1 resolved="" installdir
+    command -v fnm >/dev/null 2>&1 || die "fnm not installed (see setup.sh)"
+    case $spec in
+        *[!0-9]*)  # concrete version: vX.Y.Z or X.Y.Z
+            case $spec in v*) resolved=$spec ;; *) resolved="v$spec" ;; esac
+            ;;
+        *)         # major: resolve to the latest vX.Y.Z via fnm ls-remote
+            resolved=$(fnm ls-remote 2>/dev/null \
+                | grep -E "^v${spec}\.[0-9]+\.[0-9]+$" | latest_version) || true
+            [ -n "$resolved" ] || die "no node release found for major v$spec"
+            ;;
+    esac
+    installdir="$FNM_DIR/node-versions/$resolved/installation"
+    if [ ! -e "$installdir" ]; then
+        if is_musl; then
+            case "$(uname -m)" in
+                x86_64|amd64)
+                    # musl has no official node builds; fnm supports the
+                    # unofficial-builds mirror with an arch override (x64 only).
+                    FNM_NODE_DIST_MIRROR="https://unofficial-builds.nodejs.org/download/release" \
+                        FNM_ARCH=x64-musl fnm install "$resolved"
+                    ;;
+                *)  die "no musl node build for $(uname -m): unofficial-builds ships x64-musl only" ;;
+            esac
+        else
+            fnm install "$resolved"
+        fi
+    fi
+    [ -e "$installdir" ] || die "fnm install did not produce $installdir"
+    RESOLVED=${resolved#v}
+    RPATH=$installdir
+}
+
+backend_java() {
+    local spec=$1 resolved="" installdir platform url
+    case $spec in
+        *[!0-9]*)  # exact sdkman candidate ID (e.g. 21.0.12+1.1-tem)
+            resolved=$spec
+            ;;
+        *)         # major: resolve to the latest <major>.x.y-tem via the
+                   # version API — never `sdk list`, which forces a pager.
+            case "$(uname -s)" in
+                Darwin) platform=darwin ;;
+                *)      platform=linux ;;
+            esac
+            url="https://api.sdkman.io/2/candidates/java/${platform}/versions/list?current=&installed="
+            resolved=$(fetch "$url" | grep -E "^${spec}\.[0-9]" \
+                | grep -E -- "-tem$" | latest_version) || true
+            [ -n "$resolved" ] || die "no temurin java ${spec}.x.y found via sdkman"
+            ;;
+    esac
+    installdir="$SDKMAN_DIR/candidates/java/$resolved"
+    if [ ! -e "$installdir" ]; then
+        sdk_install_java "$resolved"
+    fi
+    [ -e "$installdir" ] || die "sdkman install did not produce $installdir"
+    RESOLVED=$resolved
+    RPATH=$installdir
+}
+
+sdk_install_java() {
+    local id=$1 bash4="" candidate
+    [ -f "$SDKMAN_DIR/bin/sdkman-init.sh" ] || die "sdkman not installed (see setup.sh)"
+    # sdkman-init.sh requires bash >= 4 while this shim must run under 3.2,
+    # so source it in a subshell under the best available bash. Non-interactive
+    # behavior comes from sdkman_auto_answer=true in ~/.sdkman/etc/config
+    # (set by setup.sh); sdkman's own install is atomic (staging + move).
+    for candidate in "$BASH" bash /opt/homebrew/bin/bash /usr/local/bin/bash; do
+        [ -n "$candidate" ] || continue
+        if "$candidate" -c "(( \${BASH_VERSINFO[0]} >= 4 ))" 2>/dev/null; then
+            bash4=$candidate
+            break
+        fi
+    done
+    [ -n "$bash4" ] || die "sdkman needs bash >= 4 (install bash via setup.sh)"
+    sdkman_auto_answer=true "$bash4" -c \
+        "set -e; source \"\$HOME/.sdkman/bin/sdkman-init.sh\"; sdk install java \"\$1\"" \
+        runtimes "$id"
+}
+
+# --- Commands ---
+
+cmd_ensure() {
+    local dir="$PWD" i name spec missing="" hash pidfile pid log
+    if [ "$#" -gt 0 ]; then dir=$1; fi
+    case $dir in
+        /*) ;;
+        *)  dir="$PWD/$dir" ;;
+    esac
+    dir=$(cd "$dir" 2>/dev/null && pwd) || die "no such directory: $dir"
+    [ -r "$dir/.runtimesrc" ] || exit 0
+    read_runtimesrc "$dir/.runtimesrc"
+    [ "$NAME_COUNT" -gt 0 ] || exit 0
+
+    # BSD is dotfiles-only: no auto-install, evaluation must still succeed.
+    case "$(uname -s)" in
+        *BSD*)
+            warn "runtime auto-install unsupported on BSD; falling back to system runtimes"
+            i=0
+            while [ "$i" -lt "$NAME_COUNT" ]; do
+                name=${NAME[$i]}
+                if command -v "$name" >/dev/null 2>&1; then
+                    info "$name: using system $(command -v "$name")"
+                else
+                    warn "$name: no system $name found"
+                fi
+                i=$((i + 1))
+            done
+            exit 0
+            ;;
+    esac
+
+    # Fast path: every entry satisfied by an existing lock pointing at a live
+    # store path — file reads only, must be milliseconds.
+    i=0
+    while [ "$i" -lt "$NAME_COUNT" ]; do
+        name=${NAME[$i]}; spec=${SPEC[$i]}
+        if ! lock_lookup "$name" "$spec" "$dir/.runtimes.lock"; then
+            missing="${missing}${name} ${spec}, "
+        elif [ ! -e "$LOCK_PATH" ]; then
+            missing="${missing}${name} ${spec}, "
+        fi
+        i=$((i + 1))
+    done
+    [ -n "$missing" ] || exit 0
+    missing=${missing%, }
+
+    hash=$(dir_hash "$dir")
+    pidfile="$PID_DIR/$hash.pid"
+    log="$LOG_DIR/$hash.log"
+    if [ -f "$pidfile" ]; then
+        pid=$(cat "$pidfile" 2>/dev/null) || pid=""
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            info "runtimes: install still in progress ($missing); log: $log"
+            exit 0
+        fi
+    fi
+    mkdir -p "$LOG_DIR" "$PID_DIR"
+    info "runtimes: installing $missing (log: $log)"
+    # Subshell keeps the job-control notice out of the caller's terminal
+    # (ensure also runs inside direnv's non-interactive eval); the worker
+    # re-claims the pid guard itself, so this spawn is safe to lose.
+    (nohup "$SELF_PATH" __ensure_dir "$dir" > "$log" 2>&1 &)
+    exit 0
+}
+
+cmd_ensure_dir() {
+    # Internal detached worker (spawned by cmd_ensure via nohup): installs
+    # everything in <dir>/.runtimesrc, then writes the lock all-or-nothing.
+    local dir=$1 hash i name spec
+    hash=$(dir_hash "$dir")
+    WORKER_PIDFILE="$PID_DIR/$hash.pid"
+    mkdir -p "$PID_DIR"
+    if ! claim_guard "$WORKER_PIDFILE"; then
+        info "runtimes: another install is already running for $dir"
+        exit 0
+    fi
+    trap cleanup_worker EXIT
+    read_runtimesrc "$dir/.runtimesrc" || exit 0
+    [ "$NAME_COUNT" -gt 0 ] || exit 0
+
+    R_NAME=(); R_SPEC=(); R_RES=(); R_PATH=(); R_COUNT=0
+    i=0
+    while [ "$i" -lt "$NAME_COUNT" ]; do
+        name=${NAME[$i]}; spec=${SPEC[$i]}
+        info "runtimes: installing $name $spec"
+        install_one "$name" "$spec"
+        if [ -n "$RESOLVED" ] && [ -n "$RPATH" ]; then
+            R_NAME[R_COUNT]=$name
+            R_SPEC[R_COUNT]=$spec
+            R_RES[R_COUNT]=$RESOLVED
+            R_PATH[R_COUNT]=$RPATH
+            R_COUNT=$((R_COUNT + 1))
+        fi
+        i=$((i + 1))
+    done
+    # Lock only when the whole .runtimesrc is satisfied — a failed line
+    # leaves the old lock in place and the next cd retries the install.
+    if [ "$R_COUNT" -lt "$NAME_COUNT" ]; then
+        warn "runtimes: install incomplete for $dir — lock not written"
+        exit 1
+    fi
+    LOCK_TMP="$dir/.runtimes.lock.tmp.$$"
+    i=0
+    while [ "$i" -lt "$R_COUNT" ]; do
+        printf '%s %s %s %s\n' "${R_NAME[$i]}" "${R_SPEC[$i]}" "${R_RES[$i]}" "${R_PATH[$i]}" \
+            >> "$LOCK_TMP"
+        i=$((i + 1))
+    done
+    mv "$LOCK_TMP" "$dir/.runtimes.lock"
+    LOCK_TMP=""
+    info "runtimes: .runtimes.lock written for $dir"
+}
+
+cmd_install() {
+    [ "$#" -eq 2 ] || die "usage: runtimes install <name> <version>"
+    case "$(uname -s)" in
+        *BSD*) die "runtime auto-install unsupported on BSD" ;;
+    esac
+    install_one "$1" "$2"
+    [ -n "$RESOLVED" ] || die "unknown runtime: $1"
+    info "installed $1 $2 -> $RESOLVED ($RPATH)"
+}
+
+cmd_status() {
+    local d
+    info "runtimes: status"
+    info "uv python store: $UV_PYTHON_DIR"
+    if command -v uv >/dev/null 2>&1; then
+        UV_NO_PROJECT=1 uv python list --only-installed >&2 \
+            || warn "uv python list failed"
+    else
+        warn "uv not installed"
+    fi
+    info "fnm store: $FNM_DIR"
+    if [ -d "$FNM_DIR/node-versions" ]; then
+        for d in "$FNM_DIR/node-versions"/*; do
+            [ -e "$d" ] && printf '%s\n' "$(basename "$d")" >&2
+        done
+    else
+        warn "no fnm node-versions installed"
+    fi
+    info "sdkman java store: $SDKMAN_DIR/candidates/java"
+    if [ -d "$SDKMAN_DIR/candidates/java" ]; then
+        for d in "$SDKMAN_DIR/candidates/java"/*; do
+            [ -e "$d" ] && [ "$(basename "$d")" != "current" ] \
+                && printf '%s\n' "$(basename "$d")" >&2
+        done
+    else
+        warn "no sdkman candidates installed"
+    fi
+    info "state (logs, install guards): $STATE_DIR"
+    if [ -f "$PWD/.runtimesrc" ]; then
+        info "project: $PWD/.runtimesrc"
+        if [ -f "$PWD/.runtimes.lock" ]; then
+            info "project lock: $PWD/.runtimes.lock"
+        else
+            info "project lock: none yet (run: runtimes ensure $PWD)"
+        fi
+    fi
+}
+
+cmd_path() {
+    local name spec dir="$PWD"
+    if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+        die "usage: runtimes path <name> <spec> [dir]"
+    fi
+    name=$1; spec=$2
+    if [ "$#" -eq 3 ]; then dir=$3; fi
+    lock_lookup "$name" "$spec" "$dir/.runtimes.lock" \
+        || die "$name $spec not satisfied in $dir (run: runtimes ensure $dir)"
+    [ -e "$LOCK_PATH" ] || die "$name $spec lock entry points at missing path: $LOCK_PATH"
+    case $name in
+        java) printf '%s\n' "$LOCK_PATH" ;;       # JAVA_HOME
+        *)    printf '%s\n' "$LOCK_PATH/bin" ;;   # interpreter bin dir
+    esac
+}
+
+cmd_template() {
+    local name dest="$PWD" force=false key val rel g files dirs tmp var escval
+    [ "$#" -ge 1 ] || die "usage: runtimes template <name> [--force] [dest]"
+    name=$1; shift
+    while [ "$#" -gt 0 ]; do
+        case $1 in
+            --force) force=true ;;
+            *)       dest=$1 ;;
+        esac
+        shift
+    done
+    [ -d "$TEMPLATES_DIR/$name" ] || die "no such template: $name (looked in $TEMPLATES_DIR)"
+    [ -f "$TEMPLATES_DIR/$name.template" ] \
+        || die "template $name has no manifest: $name.template"
+
+    # Manifest: description=, substitute= (var names), ignore= (globs).
+    local description="" substitute="" ignore=""
+    # `|| [ -n "$key" ]` handles a manifest without a trailing newline.
+    while IFS='=' read -r key val || [ -n "$key" ]; do
+        case $key in
+            description) description=$val ;;
+            substitute)  substitute=$val ;;
+            ignore)      ignore=$val ;;
+        esac
+    done < "$TEMPLATES_DIR/$name.template"
+    info "template $name: $description"
+
+    # The ignore patterns must reach the case statements as literal globs:
+    # word-splitting $ignore would also pathname-expand it against the
+    # destination directory, turning patterns into whatever files happen to
+    # be there. Globbing stays off for the whole expansion (restored below;
+    # every failure path exits the process, so the shell state cannot leak).
+    set -f
+
+    files=$(cd "$TEMPLATES_DIR/$name" && find . -type f | sed 's|^\./||') || true
+    dirs=$(cd "$TEMPLATES_DIR/$name" && find . -type d | sed 's|^\./||') || true
+
+    # Pass 1: decide everything before writing anything — no half-applied
+    # templates (evaluation re-runs use_template on every direnv reload).
+    local conflicts="" skipped=""
+    while read -r rel; do
+        [ -n "$rel" ] || continue
+        for g in $ignore; do
+            # shellcheck disable=SC2254  # glob match against the ignore list is intended
+            case $rel in $g) skipped="$skipped$rel "; continue 2 ;; esac
+        done
+        if [ -e "$dest/$rel" ] && [ "$force" != true ]; then
+            conflicts="$conflicts$rel "
+        fi
+    done <<< "$files"
+    [ -z "$conflicts" ] || die "refusing to overwrite:$conflicts (use --force)"
+    [ -z "$skipped" ] || info "template: ignoring:$skipped"
+
+    # Pass 2: stage everything (dirs + files + {{VAR}} substitution), then
+    # move per file — the destination only ever gains whole files.
+    tmp=$(mktemp -d)
+    TEMPLATE_TMP="$tmp"
+    trap 'rm -rf "$TEMPLATE_TMP"' EXIT
+    while read -r rel; do
+        [ -n "$rel" ] || continue
+        mkdir -p "$tmp/$rel"
+    done <<< "$dirs"
+    while read -r rel; do
+        [ -n "$rel" ] || continue
+        for g in $ignore; do
+            # shellcheck disable=SC2254  # glob match against the ignore list is intended
+            case $rel in $g) continue 2 ;; esac
+        done
+        cp "$TEMPLATES_DIR/$name/$rel" "$tmp/$rel"
+        for var in $substitute; do
+            escval=""
+            [ -n "${!var:-}" ] && escval=${!var}
+            if [ -z "$escval" ]; then
+                warn "template: \$$var is not set; leaving {{$var}} in $rel"
+                continue
+            fi
+            # sed cannot carry a newline through the replacement side; a
+            # multi-line value would abort the substitution (BSD/GNU sed
+            # differ in how), so it is skipped like an unset one.
+            case $escval in
+                *$'\n'*)
+                    warn "template: \$$var contains a newline; leaving {{$var}} in $rel"
+                    continue
+                    ;;
+            esac
+            escval=$(printf '%s' "$escval" | sed -e 's/[\\|&]/\\&/g')
+            sed -e "s|{{$var}}|$escval|g" "$tmp/$rel" > "$tmp/$rel.sub" \
+                && mv "$tmp/$rel.sub" "$tmp/$rel"
+        done
+    done <<< "$files"
+    while read -r rel; do
+        [ -n "$rel" ] || continue
+        for g in $ignore; do
+            # shellcheck disable=SC2254  # glob match against the ignore list is intended
+            case $rel in $g) continue 2 ;; esac
+        done
+        mkdir -p "$dest/$(dirname "$rel")"
+        mv "$tmp/$rel" "$dest/$rel"
+    done <<< "$files"
+    rm -rf "$tmp"
+    TEMPLATE_TMP=""
+    trap - EXIT
+    set +f
+    info "template $name expanded into $dest"
+}
+
+# --- Dispatch ---
+
+cmd=${1:-}
+if [ "$#" -gt 0 ]; then shift; fi
+
+case $cmd in
+    ensure)       cmd_ensure "$@" ;;
+    install)      cmd_install "$@" ;;
+    status)       cmd_status ;;
+    path)         cmd_path "$@" ;;
+    template)     cmd_template "$@" ;;
+    __ensure_dir) cmd_ensure_dir "$@" ;;  # internal: detached worker
+    -h|--help|help|"") usage ;;
+    *)            die "unknown command: $cmd (see runtimes --help)" ;;
+esac

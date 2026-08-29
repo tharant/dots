@@ -14,8 +14,10 @@ Central dotfiles repository for bash across macOS, Debian flavors, Alpine, WSL2,
 dots/
 ├── common/          # Shared configs across all platforms (GNU Stow packages)
 │   ├── bash/        # .bashrc (with .bashrc.platform.d hook), aliases, functions, ...
-│   ├── bin/         # ~/bin shims: loadavg(1), tmux-copy(1) (portable, one
-│   │                #   file for all; documented in docs/)
+│   ├── bin/         # ~/bin shims: loadavg(1), tmux-copy(1), runtimes(1)
+│   │                #   (portable, one file for all; documented in docs/)
+│   ├── direnv/      # .config/direnv (direnvrc use_* helpers, direnv.toml),
+│   │                #   ~/.envrc tree-root starter
 │   ├── git/         # .gitconfig, .gitignore_global
 │   ├── nvim/        # .config/nvim/init.lua (clipboard-guarded)
 │   ├── ssh/         # ssh config (portable; UseKeychain behind IgnoreUnknown)
@@ -31,6 +33,8 @@ dots/
 │   ├── recipients.txt  # age public key(s) for encryption (public, safe to commit)
 │   ├── ssh/         # Encrypted SSH private keys
 │   └── tokens/      # Encrypted API tokens, credentials
+├── templates/       # use_template scaffolding trees + manifests (repo root,
+│                    #   not stowed)
 ├── scripts/
 │   ├── setup.sh     # Bootstrap (curl-able): pkg_install dispatcher, platform/distro/env
 │   │                #   detection (macos/linux/bsd + alpine + wsl layers), decrypt, stow
@@ -101,6 +105,7 @@ just encrypt <file>           # Encrypt a file (age key + passphrase copies)
 just decrypt                  # Decrypt all secrets
 just man-check                # mandoc -T lint the docs/man pages
 just man-install / man-uninstall  # Manage manpage symlinks in ~/.local/share/man
+just runtimes <cmd>            # Pass a subcommand to the runtimes CLI (uv/fnm/sdkman)
 
 # Dev
 just lint                     # Shellcheck all scripts and bash dotfiles
@@ -132,7 +137,8 @@ message must match the implementation; run `just man-check` (mandoc lint
 over all pages) and fix any doc drift. The [README](README.md)
 Documentation table must list every page/script pair. Currently documented:
 `dots-setup`, `dots-encrypt`, `dots-decrypt`, `dots-verify`, `loadavg`,
-`tmux-copy`.
+`tmux-copy`, `runtimes` (the direnv feature guide, `docs/direnv-runtimes.md`,
+accompanies it).
 
 Scripts can also be called directly:
 
@@ -150,7 +156,7 @@ Scripts can also be called directly:
 - **Never commit unencrypted secrets.** `.gitignore` blocks the `id_*` key family (except `*.pub`) and common patterns, but always verify with `git status` before committing.
 - **The age private key (`keys.txt`) must never be in this repo.** `secrets/recipients.txt` is public keys only — safe to commit.
 - **File permissions:** SSH keys `chmod 600`, `.ssh/` dir `chmod 700`, decrypted tokens `chmod 600`. `decrypt.sh` enforces this (with `umask 077` from the start) for every target directory.
-- **Platform-specific configs go in platform dirs**, not as conditionals in common configs. Keep `common/` portable across macOS, Linux, and BSD. Sanctioned exceptions: the `~/.bashrc.platform.d` source hook in `.bashrc`, the bash ≥4.3 guard before trueline, and `command -v` guards for tools that are genuinely optional per platform.
+- **Platform-specific configs go in platform dirs**, not as conditionals in common configs. Keep `common/` portable across macOS, Linux, and BSD. Sanctioned exceptions: the `~/.bashrc.platform.d` source hook in `.bashrc`, the bash ≥4.3 guard before trueline, `command -v` guards for tools that are genuinely optional per platform, and capability-degradation guards in the portable `common/bin` shims (e.g. `uname`/musl detection in `runtimes` to refuse or degrade on platforms without a backend).
 - **Stow package layout must mirror `$HOME`.** E.g., to deploy `~/.bashrc`, the file goes at `common/bash/.bashrc`.
 - **Bootstrap scripts must run under bash 3.2** (fresh-macOS `curl | bash` resolves `/bin/bash` 3.2): no `declare -A`, no `mapfile`, no `${var,,}` in `scripts/`, `.githooks/`, or the shims. Interactive configs require bash ≥ 4.3, which setup.sh installs.
 - **Run `shellcheck` before committing any bash files.** A pre-commit hook (`.githooks/pre-commit`) enforces this automatically (setup.sh installs the hook path). Fix all errors and warnings; SC1090/SC1091 (non-constant source) are globally excluded. If a warning seems like a false positive, ask the user before suppressing it with a directive.

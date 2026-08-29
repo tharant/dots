@@ -157,6 +157,71 @@ if [[ $found_secrets -eq 0 ]]; then
     $QUIET || echo "  (no .age files found)"
 fi
 
+# --- direnv/runtimes ---
+
+section "direnv + runtimes"
+
+# Soft presence: setup.sh installs direnv as a hard requirement, but verify.sh
+# can legitimately run pre-bootstrap, so absence is reported, not failed.
+if command -v direnv &>/dev/null; then
+    pass "direnv installed"
+else
+    $QUIET || echo "  - direnv not found (soft check; setup.sh installs it)"
+fi
+
+# The direnv hook must sit after the trueline source: trueline resets
+# PROMPT_COMMAND when it loads and never chains, silently discarding a hook
+# placed before it. Compare line numbers so a reorder cannot slip through.
+bashrc="$HOME/.bashrc"
+if [[ -f "$bashrc" ]]; then
+    hook_line="$(grep -n 'direnv hook bash' "$bashrc" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+    trueline_line="$(grep -n 'source .*trueline' "$bashrc" 2>/dev/null | head -1 | cut -d: -f1 || true)"
+    if [[ -z "$hook_line" ]]; then
+        fail "direnv hook missing from $HOME/.bashrc"
+    elif [[ -z "$trueline_line" ]]; then
+        fail "trueline source missing from $HOME/.bashrc (cannot confirm hook order)"
+    elif [[ "$hook_line" -le "$trueline_line" ]]; then
+        fail "direnv hook (line $hook_line) must come after the trueline source (line $trueline_line)"
+    else
+        pass "direnv hook (line $hook_line) ordered after the trueline source (line $trueline_line)"
+    fi
+else
+    fail "$HOME/.bashrc not found"
+fi
+
+# Content check on the symlink target in the repo — the symlink itself is
+# already covered by check_symlinks auto-discovery.
+direnvrc="$REPO_DIR/common/direnv/.config/direnv/direnvrc"
+if [[ -f "$direnvrc" ]] && grep -Eq '^[[:space:]]*(function[[:space:]]+)?use_runtimes[[:space:]]*\(\)' "$direnvrc"; then
+    pass "direnvrc defines use_runtimes"
+else
+    fail "direnvrc missing or does not define use_runtimes ($direnvrc)"
+fi
+
+# Symlink existence is covered by check_symlinks; the executable bit lives on
+# the repo file, which is what -x tests through the deployed symlink.
+if [[ -x "$HOME/bin/runtimes" ]]; then
+    pass "$HOME/bin/runtimes is executable"
+else
+    fail "$HOME/bin/runtimes missing or not executable"
+fi
+
+# Soft: uv/fnm/sdkman are best-effort installs and the BSD tier legitimately
+# ships without them, so absence is reported, not failed. sdkman has no binary
+# on PATH outside an interactive shell; its install dir is the presence signal.
+for tool in uv fnm; do
+    if command -v "$tool" &>/dev/null; then
+        pass "$tool installed"
+    else
+        $QUIET || echo "  - $tool not found (optional)"
+    fi
+done
+if command -v sdk &>/dev/null || [[ -d "$HOME/.sdkman" ]]; then
+    pass "sdkman installed"
+else
+    $QUIET || echo "  - sdkman not found (optional)"
+fi
+
 # --- Summary ---
 
 echo ""

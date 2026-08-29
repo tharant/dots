@@ -284,6 +284,44 @@ install_age_binary() {
     info "Installed age to $HOME/.local/bin"
 }
 
+install_direnv() {
+    # Upstream static direnv release, for when no package is available.
+    # Unlike age this is a hard requirement — the direnv stow package is
+    # useless without its hook binary — so post_install_checks aborts the
+    # run when neither a package nor this fallback produces a binary.
+    local version="v2.37.1"
+    local os="" arch="" url tmp
+
+    case "$PLATFORM" in
+        linux) os="linux" ;;
+        macos) os="darwin" ;;
+        bsd)   os="freebsd" ;;
+        *)     warn "No prebuilt direnv release for platform '$PLATFORM'"; return 1 ;;
+    esac
+    case "$(uname -m)" in
+        x86_64|amd64)        arch="amd64" ;;
+        aarch64|arm64|armv8) arch="arm64" ;;
+        *)                   warn "No prebuilt direnv release for architecture '$(uname -m)'"; return 1 ;;
+    esac
+
+    # The release asset is a single binary, not a tarball
+    url="https://github.com/direnv/direnv/releases/download/$version/direnv.$os-$arch"
+    info "Installing direnv from static release: $url"
+    tmp="$(mktemp -d)"
+    if ! download "$url" "$tmp/direnv"; then
+        rm -rf "$tmp"
+        return 1
+    fi
+    mkdir -p "$HOME/.local/bin"
+    install -m 0755 "$tmp/direnv" "$HOME/.local/bin/direnv"
+    rm -rf "$tmp"
+    case ":$PATH:" in
+        *":$HOME/.local/bin:"*) ;;
+        *) warn "Add $HOME/.local/bin to PATH: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+    esac
+    info "Installed direnv to $HOME/.local/bin"
+}
+
 install_just_binary() {
     # just is not packaged for Debian bookworm — use the upstream musl binary
     local version="1.58.0"
@@ -423,7 +461,7 @@ macos_default_shell() {
 }
 
 alpine_prepare() {
-    # age, stow, just and shellcheck all live in the community repository
+    # age, stow, just, shellcheck and direnv all live in the community repository
     if [[ ! -f /etc/apk/repositories ]]; then
         warn "/etc/apk/repositories not found — cannot check for the community repo"
         FAILURES+=("alpine: repositories file missing")
@@ -512,6 +550,184 @@ install_utf8_locale() {
     }
 }
 
+# --- Runtime managers (best-effort) ---
+
+install_uv() {
+    # uv (python backend for the `runtimes` shim) via the official installer.
+    # UV_NO_MODIFY_PATH=1 is mandatory: without it the installer appends PATH
+    # lines to the shell RCs, which on a deployed machine are stowed symlinks
+    # into this repo (dirty-tree hazard).
+    if command_exists uv; then
+        info "uv already installed"
+        return 0
+    fi
+    local tmp
+    tmp="$(mktemp -d)"
+    if ! download "https://astral.sh/uv/install.sh" "$tmp/uv-install.sh"; then
+        warn "Could not download the uv installer"
+        rm -rf "$tmp"
+        return 1
+    fi
+    info "Installing uv (official installer)..."
+    if ! UV_NO_MODIFY_PATH=1 sh "$tmp/uv-install.sh"; then
+        warn "The uv installer failed"
+        rm -rf "$tmp"
+        return 1
+    fi
+    rm -rf "$tmp"
+    if [[ ! -x "$HOME/.local/bin/uv" ]]; then
+        warn "The uv installer finished but $HOME/.local/bin/uv is missing"
+        return 1
+    fi
+    info "Installed uv to $HOME/.local/bin"
+}
+
+install_fnm() {
+    # fnm (node backend for the `runtimes` shim) from the upstream release
+    # zips. fnm-macos.zip is a universal (x86_64 + aarch64) binary;
+    # fnm-linux.zip (x86_64) and fnm-arm64.zip (aarch64) are static musl
+    # binaries, so they run on Alpine and glibc alike.
+    if command_exists fnm; then
+        info "fnm already installed"
+        return 0
+    fi
+    local version="v1.39.0"
+    local asset="" url tmp
+
+    case "$PLATFORM" in
+        macos) asset="fnm-macos.zip" ;;
+        linux)
+            case "$(uname -m)" in
+                x86_64|amd64)        asset="fnm-linux.zip" ;;
+                aarch64|arm64|armv8) asset="fnm-arm64.zip" ;;
+                *)                   warn "No fnm release for architecture '$(uname -m)'"; return 1 ;;
+            esac
+            ;;
+        *)     warn "No fnm release for platform '$PLATFORM'"; return 1 ;;
+    esac
+
+    # The releases are zips; pull unzip on demand (Alpine ships it as a
+    # busybox applet, macOS as part of the base system)
+    if ! command_exists unzip; then
+        pkg_install unzip || { warn "unzip is needed to extract the fnm release"; return 1; }
+    fi
+
+    url="https://github.com/Schniz/fnm/releases/download/$version/$asset"
+    info "Installing fnm from release: $url"
+    tmp="$(mktemp -d)"
+    if ! download "$url" "$tmp/$asset"; then
+        rm -rf "$tmp"
+        return 1
+    fi
+    if ! unzip -o "$tmp/$asset" -d "$tmp"; then
+        warn "Could not extract the fnm release"
+        rm -rf "$tmp"
+        return 1
+    fi
+    mkdir -p "$HOME/.local/bin"
+    install -m 0755 "$tmp/fnm" "$HOME/.local/bin/fnm"
+    rm -rf "$tmp"
+    case ":$PATH:" in
+        *":$HOME/.local/bin:"*) ;;
+        *) warn "Add $HOME/.local/bin to PATH: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+    esac
+    info "Installed fnm to $HOME/.local/bin"
+}
+
+sdkman_auto_answer() {
+    # `sdk install` prompts y/n unless sdkman_auto_answer=true; the installer
+    # writes 'false', so flip the key in place (append only when missing)
+    local config="$HOME/.sdkman/etc/config"
+    if [[ ! -f "$config" ]]; then
+        warn "sdkman config not found at $config"
+        return 1
+    fi
+    if grep -q '^sdkman_auto_answer=' "$config"; then
+        # sed -i differs between GNU and BSD — rewrite via a temp file
+        sed 's/^sdkman_auto_answer=.*/sdkman_auto_answer=true/' "$config" > "$config.tmp" \
+            && mv "$config.tmp" "$config"
+    else
+        echo 'sdkman_auto_answer=true' >> "$config"
+    fi
+    info "sdkman_auto_answer=true set in $config"
+}
+
+install_sdkman() {
+    # sdkman (java backend for the `runtimes` shim) via the official
+    # installer, on the install_homebrew precedent: best-effort, never fatal.
+    #
+    # The installer appends its init snippet to ~/.bashrc, ~/.bash_profile or
+    # ~/.zshrc (and creates them when absent). On a deployed machine those
+    # are stowed symlinks into this repo — the append dirties the working
+    # tree — and on a fresh one the created files would collide with stow.
+    # So each file is snapshotted before the install and restored right
+    # after; our .bashrc already ships the identical snippet, so the strip
+    # changes nothing functionally.
+    if [[ -x "$HOME/.sdkman/bin/sdkman-init.sh" ]]; then
+        info "sdkman already installed"
+        sdkman_auto_answer || return 1
+        return 0
+    fi
+
+    # The installer needs zip/unzip alongside curl and tar; Debian's minimal
+    # install ships neither
+    if ! command_exists zip || ! command_exists unzip; then
+        pkg_install zip unzip || { warn "zip/unzip could not be installed"; return 1; }
+    fi
+
+    local tmp
+    tmp="$(mktemp -d)"
+
+    # Snapshot the shell RCs the installer may touch
+    local rc
+    for rc in bashrc bash_profile zshrc; do
+        if [[ -f "$HOME/.$rc" ]]; then
+            cp "$HOME/.$rc" "$tmp/$rc"
+        else
+            touch "$tmp/$rc.missing"
+        fi
+    done
+
+    local installed=true
+    if ! download "https://get.sdkman.io" "$tmp/sdkman-install.sh"; then
+        warn "Could not download the sdkman installer"
+        installed=false
+    elif ! bash "$tmp/sdkman-install.sh"; then
+        warn "The sdkman installer failed"
+        installed=false
+    fi
+
+    # Strip the appended snippets (or remove files the installer created)
+    for rc in bashrc bash_profile zshrc; do
+        if [[ -f "$tmp/$rc.missing" ]]; then
+            rm -f "$HOME/.$rc"
+        elif [[ -f "$tmp/$rc" ]]; then
+            cat "$tmp/$rc" > "$HOME/.$rc"
+        fi
+    done
+    rm -rf "$tmp"
+
+    if [[ "$installed" != "true" ]]; then
+        return 1
+    fi
+    sdkman_auto_answer || return 1
+    info "Installed sdkman to $HOME/.sdkman"
+}
+
+install_runtimes() {
+    # Backends behind the `runtimes` shim. direnv (the hard requirement) is
+    # already handled by the package lists plus post_install_checks; these
+    # three are best-effort and must never abort the run. BSD is
+    # dotfiles-only: runtime auto-install is unsupported there.
+    if [[ "$PLATFORM" == "bsd" ]]; then
+        info "BSD: skipping uv, fnm, sdkman (runtime auto-install unsupported)"
+        return 0
+    fi
+    install_uv || FAILURES+=("install: uv")
+    install_fnm || FAILURES+=("install: fnm")
+    install_sdkman || FAILURES+=("install: sdkman")
+}
+
 post_install_checks() {
     # Never fail silently: verify the tools the rest of the run depends on
     local tool
@@ -527,6 +743,12 @@ post_install_checks() {
     if ! command_exists age; then
         install_age_binary || FAILURES+=("install: age (static binary fallback)")
     fi
+    # direnv is a hard requirement — the direnv stow package is useless
+    # without its hook binary — so unlike age there is no FAILURES entry:
+    # the run aborts if neither a package nor the static fallback worked.
+    if ! command_exists direnv; then
+        install_direnv || error "direnv is required for the direnv integration but could not be installed."
+    fi
 }
 
 install_core() {
@@ -541,7 +763,7 @@ install_core() {
             export HOMEBREW_NO_ENV_HINTS=1
             install_homebrew
             info "Installing core packages via Homebrew..."
-            pkg_install_set bash age stow just tmux shellcheck git coreutils
+            pkg_install_set bash age stow just tmux shellcheck git coreutils direnv
             macos_default_shell
             ;;
         linux)
@@ -549,7 +771,7 @@ install_core() {
                 alpine_prepare
                 info "Installing core packages via apk..."
                 local alpine_pkgs=(bash coreutils findutils util-linux git age stow just tmux
-                    shellcheck shadow bash-completion ncurses-terminfo curl ca-certificates)
+                    shellcheck direnv shadow bash-completion ncurses-terminfo curl ca-certificates)
                 # Keep doas-only systems doas-only
                 if ! command_exists sudo && ! command_exists doas; then
                     alpine_pkgs+=(sudo)
@@ -558,20 +780,21 @@ install_core() {
             elif [[ "$PKG_MGR" == "apt-get" ]]; then
                 info "Installing core packages via apt..."
                 pkg_install_set git age stow tmux shellcheck bash coreutils less \
-                    locales ca-certificates curl wl-clipboard xz-utils
+                    locales ca-certificates curl wl-clipboard xz-utils direnv
                 install_debian_extra
             else
                 info "Installing core packages..."
-                pkg_install_set git age stow just tmux shellcheck bash coreutils curl ca-certificates
+                pkg_install_set git age stow just tmux shellcheck bash coreutils direnv curl ca-certificates
             fi
             ;;
         bsd)
             info "Installing core packages via pkg..."
-            pkg_install_set git age stow just tmux shellcheck bash coreutils curl ca_root_nss
+            pkg_install_set git age stow just tmux shellcheck bash coreutils direnv curl ca_root_nss
             ;;
     esac
 
     post_install_checks
+    install_runtimes
 }
 
 preflight_checks() {

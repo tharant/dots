@@ -1,0 +1,3 @@
+description=Minimal example template proving the use_template plumbing
+substitute=PROJECT_NAME
+ignore=*.local

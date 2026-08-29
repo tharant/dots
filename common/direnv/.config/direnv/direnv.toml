@@ -1,0 +1,7 @@
+# direnv configuration (stowed to ~/.config/direnv/direnv.toml).
+#
+# warn_timeout bumped from the 5s default for headroom on the `runtimes
+# ensure` fast no-op path (slow disks); the warning never kills a stuck
+# evaluation. No [whitelist] section: trusting a project stays an explicit
+# `direnv allow`.
+warn_timeout = "10s"
