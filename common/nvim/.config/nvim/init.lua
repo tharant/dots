@@ -20,8 +20,12 @@ vim.opt.shiftwidth = 4
 vim.opt.tabstop = 4
 vim.opt.smartindent = true
 
--- Clipboard
-vim.opt.clipboard = "unnamedplus"
+-- Clipboard: only use the system clipboard when something can reach it
+-- (pbcopy / wl-copy / xclip / win32yank, or a graphical session to find one in)
+if vim.fn.exepath('pbcopy') ~= '' or vim.fn.exepath('wl-copy') ~= '' or vim.fn.exepath('xclip') ~= ''
+  or vim.fn.exepath('win32yank.exe') ~= '' or vim.env.WAYLAND_DISPLAY or vim.env.DISPLAY then
+  vim.opt.clipboard = "unnamedplus"
+end
 
 -- Visual
 vim.opt.termguicolors = true
