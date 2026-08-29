@@ -37,6 +37,20 @@ encrypt FILE:
 decrypt:
   ./scripts/decrypt.sh
 
+# --- Manpages (docs/man) ---
+
+# Lint all manpages (mandoc -T lint)
+man-check:
+  cd docs/man && make check
+
+# Install manpage symlinks into ~/.local/share/man/man1
+man-install:
+  cd docs/man && make install
+
+# Remove the installed manpage symlinks
+man-uninstall:
+  cd docs/man && make uninstall
+
 # --- Dev ---
 
 # Run shellcheck on all shell scripts and bash dotfiles
@@ -121,15 +135,25 @@ list-packages:
 diff-secrets:
   #!/usr/bin/env bash
   set -euo pipefail
-  declare -A target_map=( ["ssh"]="$HOME/.ssh" ["tokens"]="$HOME/.config/tokens" )
+  target_dir_for() {
+    case "$1" in
+      ssh)    echo "$HOME/.ssh" ;;
+      tokens) echo "$HOME/.config/tokens" ;;
+      *)      echo "" ;;
+    esac
+  }
   found=0
   while IFS= read -r -d '' age_file; do
-    found=1
     rel="${age_file#secrets/}"
+    # Passphrase fallback copies decrypt to the same target as X.age
+    case "$rel" in
+      *.phrase.age) continue ;;
+    esac
+    found=1
     subdir="${rel%%/*}"
     filename="${rel#*/}"
     filename="${filename%.age}"
-    target_dir="${target_map[$subdir]:-}"
+    target_dir="$(target_dir_for "$subdir")"
     [[ -z "$target_dir" ]] && continue
     target="$target_dir/$filename"
     if [[ ! -f "$target" ]]; then

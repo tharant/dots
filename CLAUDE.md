@@ -36,7 +36,9 @@ dots/
 │   ├── verify.sh    # Symlink + permissions health check (stow-ignore aware)
 │   ├── encrypt.sh   # Encrypt a file (age key + passphrase copies)
 │   └── decrypt.sh   # Decrypt secrets (age key if present, else passphrase)
-├── docs/            # Reference documentation
+├── docs/            # Reference docs: per-script manpage mirrors (dots-*.md),
+│   │                #   platform notes; roff sources in docs/man/ + Makefile
+│   │                #   (just man-check / man-install)
 ├── Justfile         # Task runner (just) for common operations
 ├── .editorconfig    # Editor formatting settings
 └── .gitignore       # Blocks plaintext secret patterns (id_* etc.)
@@ -95,6 +97,8 @@ just unstow                   # Remove all managed symlinks
 just verify                   # Run verification checks
 just encrypt <file>           # Encrypt a file (age key + passphrase copies)
 just decrypt                  # Decrypt all secrets
+just man-check                # mandoc -T lint the docs/man pages
+just man-install / man-uninstall  # Manage manpage symlinks in ~/.local/share/man
 
 # Dev
 just lint                     # Shellcheck all scripts and bash dotfiles

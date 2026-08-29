@@ -1,0 +1,324 @@
+.TH DOTS\-VERIFY 1 "2026-08-28" "dots" "User Commands"
+.SH NAME
+dots\-verify \- check the health of a deployed dots configuration
+.SH SYNOPSIS
+.B dots\-verify
+.RB [ \-\-quiet ]
+.SH DESCRIPTION
+.B dots\-verify
+inspects the current machine against the contents of the dots repository and
+reports one pass or failure per check. It changes nothing: every check is
+read-only, so it is safe to run at any time.
+.PP
+The repository root is derived from the location of the script itself: the
+parent of the directory containing
+.B verify.sh
+is used, so the same copy works when invoked directly or through
+.BR just (1).
+The platform directory is selected from
+.BR uname (1):
+on
+.B Darwin
+it becomes
+.IR macos ,
+on
+.B Linux
+it becomes
+.IR linux ,
+and any
+.B *BSD
+name becomes
+.IR bsd .
+Any other value is used verbatim as the platform name.
+.PP
+The script is written to run under the bash 3.2 that ships with macOS
+(no associative arrays; the secrets target mapping is a
+.B case
+statement), so it works both in a fresh curl-piped bootstrap and on an
+established machine. It runs under
+.B "set \-euo pipefail"
+and aborts at a failing command.
+.PP
+Four groups of checks are run.
+.SS Required tools
+.IR age ,
+.IR stow ,
+and
+.B git
+must each be found on
+.BR PATH .
+One pass or failure line is printed per tool.
+.SS Symlinks: common and Symlinks: <platform>
+Every regular file in each Stow package under
+.I common/
+and
+.IR <platform>/
+must be deployed at the same path below
+.RI HOME ,
+with the package-relative path appended to
+.RI $HOME "/" .
+For each such file the script requires that the target exists, is a symlink,
+and resolves to the repository file: relative link targets are converted to
+absolute paths before comparison. Failure messages distinguish three cases:
+the target exists but is not a symlink, the target is missing entirely, and
+the symlink points somewhere other than the repository. If a package base
+directory does not exist, that whole group is skipped silently.
+.PP
+Note the coverage: only
+.I common/
+and
+.I <platform>/
+are walked.
+.BR dots\-setup (1)
+additionally stows the
+.I alpine/
+layer under Alpine and the
+.I wsl/
+layer under WSL; packages in those two layers are deployed below
+.RI HOME
+but are not inspected by these symlink checks.
+.PP
+The directory walk excludes files named
+.BR *~ ,
+.BR #*# ,
+.BR ".git*" ,
+or
+.BR .DS_Store .
+Those four names are a pragmatic approximation of GNU Stow's default ignore
+list, not a match of it. The
+.B *~
+and
+.B #*#
+entries agree with Stow \(em its built-in list ignores every name ending in
+.B ~
+and every
+.B #...#
+autosave file \(em but the other two diverge from Stow's behavior in both
+directions, and one divergence bites today.
+.PP
+Stow's defaults ignore only the exact names
+.BR .git ,
+.BR .gitignore ,
+and
+.B .gitmodules
+(along with
+.BR .cvsignore ,
+.BR RCS ,
+.BR CVS ,
+.BR .svn ,
+.BR .hg ,
+and
+.BR _darcs ),
+not
+.B .git*
+in general. Any other
+.B .git*
+name \(em
+.B .gitignore_global ,
+.BR .github ,
+and so on \(em is deployed when a package is stowed, while the walk skips it,
+so a broken or missing symlink for such a file goes unreported. This does
+bite in this repository:
+.IR common/git/.gitignore_global ,
+exists and gets stowed to
+.IR ~/.gitignore_global ,
+but the
+.B .git*
+exclusion keeps it out of the walk, so
+.B verify.sh
+can never report a broken or missing
+.I ~/.gitignore_global
+symlink.
+.B .DS_Store ,
+meanwhile, is not in Stow 2.4.1's built-in list at all, so Stow would deploy
+one while the walk skips it \(em also unreported, though no such file exists
+in this repository's packages today.
+.PP
+In the other direction, a top-level
+.BR "README*" ,
+.BR "LICENSE*" ,
+or
+.B COPYING
+in a package is walked here even though Stow's path-anchored default ignores
+keep it from being deployed, so a missing symlink for one would be reported
+although Stow never created it. None of those exist in this repository's
+packages either.
+.SS "File permissions"
+The
+.I ~/.ssh
+directory must have mode 700, and every regular file directly inside it whose
+name matches
+.B id_*
+but not
+.B *.pub
+must have mode 600. If
+.I ~/.ssh
+does not exist, a single failure is reported. Modes are read with GNU
+.B "stat \-c %a"
+and fall back to the BSD/macOS form
+.B "stat \-f %Lp" .
+.SS "Decrypted secrets"
+Every
+.B *.age
+file under
+.I secrets/
+must have its plaintext counterpart present. Passphrase fallback copies named
+.B *.phrase.age
+are skipped: they exist only as vault copies of the corresponding
+.B .age
+file and have no deployed target. The first path component below
+.I secrets/
+selects the target directory:
+.B ssh
+maps to
+.I ~/.ssh
+and
+.B tokens
+maps to
+.IR ~/.config/tokens ;
+the
+.B .age
+suffix is stripped from the filename, and the resulting path must exist as a
+regular file in the target directory. An unmapped subdirectory is reported
+as a failure, "No target mapping for\ ...".
+.PP
+If the walk yields no secrets to check, a note reading
+.B "(no .age files found)"
+is printed. The trigger is a counter of non-passphrase
+.B .age
+files that is still zero when the walk ends \-\-
+.B *.phrase.age
+copies are skipped before it is incremented \-\- so the note appears both
+when
+.I secrets/
+is missing or holds no
+.B .age
+files at all and when the tree holds nothing but
+.B *.phrase.age
+fallback copies. The wording is a little loose in the second case
+(\fB.age\fP files do exist there), but the note still reads
+.BR "(no .age files found)" .
+It is informational and does not count as a failure.
+.SH OPTIONS
+.TP
+.B \-\-quiet
+Suppress per-check output: the
+.B ==>
+section banners, the green pass and red fail marks, and the
+.B "(no .age files found)"
+note. The empty line and final summary line are still printed, counters are
+still accumulated, and the exit status is unaffected.
+.B \-\-quiet
+is only recognized as the first argument; every other argument is ignored.
+There is no
+.B \-\-help
+option.
+.SH ENVIRONMENT
+.TP
+.B HOME
+Base directory for all deployed targets. The symlink checks compare against
+.IR "$HOME/<relative path>" ,
+and the permissions and secrets checks inspect
+.I ~/.ssh
+and
+.IR ~/.config/tokens .
+.TP
+.B REPO_DIR
+Set by the script to the repository root (the parent of the directory
+containing the script) and exported to child processes.
+.TP
+.B PATH
+Searched when checking that
+.IR age ,
+.IR stow ,
+and
+.B git
+are installed.
+.SH EXIT STATUS
+.TP
+.B 0
+Every check passed.
+.TP
+.B 1
+At least one check failed. A non-zero status can also result from the script
+aborting under
+.BR "set \-e" .
+.SH FILES
+.TP
+.I scripts/verify.sh
+The script itself; its location determines the repository root.
+.TP
+.IR common/*/ " and " <platform>/*/
+Stow packages whose contents are checked against
+.RI HOME .
+.TP
+.I secrets/*/*.age
+Encrypted secrets checked for a decrypted counterpart.
+.TP
+.I ~/.ssh
+Checked for mode 700, and for private keys matching
+.B id_*
+(not
+.BR *.pub )
+with mode 600.
+.TP
+.I ~/.config/tokens
+Target directory for secrets stored under
+.IR secrets/tokens/ .
+.SH DIAGNOSTICS
+Normal output is a
+.B ==>
+banner for each section followed by indented lines, each prefixed with a
+green check mark for a pass or a red cross for a failure, for example:
+.PP
+.RS
+.nf
+==> Symlinks: common
+  <pass> common/bash: ~/.bashrc
+  <fail> common/tmux: ~/.tmux.conf missing
+.fi
+.RE
+.PP
+(Here
+.B <pass>
+stands for the green check the script prints and
+.B <fail>
+for its red cross.) After all sections, an empty line is printed followed by
+one of two summary lines:
+.B "All N checks passed."
+when nothing failed, otherwise
+.BI "N failed, M passed."
+The summary is printed even under
+.BR \-\-quiet .
+.SH EXAMPLES
+Check the current deployment and print every result:
+.PP
+.RS
+.nf
+\&./scripts/verify.sh
+.fi
+.RE
+.PP
+Run it through
+.BR just (1);
+the
+.B verify
+recipe invokes the script:
+.PP
+.RS
+.nf
+just verify
+.fi
+.RE
+.PP
+Use it as a quiet gate in a script or hook, acting only on the exit status:
+.PP
+.RS
+.nf
+\&./scripts/verify.sh --quiet || echo "deployment unhealthy"
+.fi
+.RE
+.SH SEE ALSO
+.BR dots\-setup (1),
+.BR dots\-encrypt (1),
+.BR dots\-decrypt (1)

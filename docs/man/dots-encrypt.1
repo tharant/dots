@@ -1,0 +1,284 @@
+.TH DOTS-ENCRYPT 1 "2026-08-28" "dots" "User Commands"
+.SH NAME
+dots\-encrypt \- hybrid\-encrypt a plaintext file as paired age artifacts
+.SH SYNOPSIS
+.B dots\-encrypt
+.I plaintext\-file
+.RI [ output.age ]
+.SH DESCRIPTION
+.B dots\-encrypt
+encrypts one plaintext file into
+.B two
+age artifacts that encrypt the same content, so that either one alone can
+restore it:
+.TP
+.I output.age
+Encrypted to the public keys listed in
+.IR secrets/recipients.txt .
+This is the copy used on established machines, which hold the matching age
+identity at
+.IR ~/.age/keys.txt .
+.TP
+.I output.phrase.age
+Encrypted with an interactive passphrase
+.RB ( age \-p ).
+This is the copy used on a fresh machine that has no age identity yet, for
+example a
+.BR curl "| " bash
+bootstrap.
+.PP
+The age file format itself cannot combine a recipient stanza with a passphrase
+stanza in one file (no CLI can produce such a file), which is why two separate
+artifacts are written instead of one.
+.PP
+The encryption runs in three stages, each of which guards against leaving bad
+ciphertext behind:
+.IP \(bu 3
+Recipient encryption with
+.B "age \-R"
+runs first, so all passphrase prompting is confined to the final stage.
+.IP \(bu 3
+Passphrase encryption runs second. An exit trap removes the partial passphrase
+artifact whenever the script exits during this step, and a failed passphrase
+encryption (a non\-zero exit from
+.BR "age \-p" )
+removes the recipient (key\-only) copy as well. A signal\-driven abort, such
+as Ctrl\-C
+at the
+.B age \-p
+prompt \- is the exception: the trap still removes the passphrase copy, but the
+removal of the recipient copy belongs to the failure branch, which a signal
+skips, so the key\-only artifact from stage 1 does survive an interrupt. Only a
+non\-zero exit takes it away.
+.IP \(bu 3
+Both artifacts are then verified by decrypting them on the spot and comparing
+the result byte\-for\-byte against the original with
+.BR diff \-q .
+Any mismatch or decrypt failure deletes
+.B both
+artifacts and exits non\-zero, so a bad ciphertext is never committed.
+.PP
+If verification succeeds, the two artifacts are staged and committed to the
+repository automatically (see
+.B EXIT STATUS
+and
+.BR DIAGNOSTICS ).
+.SH OPTIONS
+No traditional options are accepted; both arguments are positional.
+.TP
+.I plaintext\-file
+Path to the file to encrypt. Must exist as a regular file. The file is never
+modified or deleted by this script.
+.TP
+.I output.age
+Optional destination for the recipient\-encrypted artifact. The passphrase copy
+is always written next to it, with the
+.B .age
+suffix replaced by
+.BR .phrase.age :
+for an output of
+.I foo.age
+the copy is
+.IR foo.phrase.age .
+If the argument does not end in
+.BR .age ,
+the suffix is appended.
+.PP
+If the second argument is omitted, the destination is inferred from the input
+path:
+.TP
+.B ~/.ssh/*
+.IR secrets/ssh/<relative\-path>.age
+.TP
+.B ~/.config/tokens/*
+.IR secrets/tokens/<relative\-path>.age
+.PP
+If the input lives under neither directory, the script prints the prompt
+.B "Could not infer target. Enter output path:"
+and reads the answer from standard input; an empty answer is a fatal error.
+Because the answer is read from standard input, piping input into the script
+can supply it. (The prompt itself is written to standard error, and bash's
+.B read
+only displays it when standard input is a terminal.)
+.PP
+Existing ciphertext is never overwritten silently. If either target file
+already exists, the script prints
+.BI "Warning: <relative path> exists. Overwrite? [y/N] "
+for each and aborts unless the reply is exactly
+.B y
+or
+.BR Y .
+There is no flag to bypass this prompt; it is what stands between a wrong
+target and the loss of the mapping between a committed artifact and the key it
+was made from.
+.SH ENVIRONMENT
+.TP
+.B HOME
+Used to resolve the two auto\-infer source roots
+.RB ( ~/.ssh ,
+.BR ~/.config/tokens )
+and the age identity path
+.RI ( ~/.age/keys.txt ).
+There are no dotfiles\-specific environment variables.
+.TP
+.B TMPDIR
+Affects the location of the two
+.BR mktemp (1)
+scratch files used for round\-trip verification. They are removed on exit.
+.SH EXIT STATUS
+.TP
+.B 0
+Both artifacts were written, and the auto\-commit either succeeded or was
+skipped with a warning (commit failures are not fatal). If
+.I ~/.age/keys.txt
+is absent on this machine, the age\-key round\-trip verification is skipped
+(see
+.BR FILES ),
+so exit status 0 can mean only the passphrase artifact was verified.
+.TP
+.B 1
+Any of: no arguments at all (a usage line is printed; a third or later argument
+is silently ignored, not an error); input file missing or not a regular file;
+.B age
+not on
+.BR PATH ;
+.I secrets/recipients.txt
+missing; no output path inferable and none entered at the prompt; decline of
+an overwrite prompt; recipient encryption failure; passphrase encryption
+failure or abort; either verification (decrypt or
+.BR diff ) " failure."
+.SH FILES
+.TP
+.I secrets/recipients.txt
+Age public keys of every machine that may decrypt. Required to exist; without
+it the script exits before doing any work, advising
+.B "age\-keygen \-o ~/.age/keys.txt"
+followed by adding the public key to this file.
+.TP
+.I ~/.age/keys.txt
+Age identity used to verify the recipient artifact. If it is absent the
+age\-key verification is
+.B skipped
+with a warning suggesting that
+.BR dots\-decrypt (1)
+be run on a machine that has the identity; the passphrase artifact is still
+verified. The private key itself must never be committed to the repository.
+.TP
+.I secrets/ssh/*, secrets/tokens/*
+Default output locations when the input is under
+.B ~/.ssh
+or
+.BR ~/.config/tokens .
+Target locations mirror what
+.BR dots\-decrypt (1)
+maps back on install.
+.TP
+.I <output>.age, <output>.phrase.age
+The two written artifacts. The script sets
+.B "umask 077"
+before doing any work, so both are created with mode
+.BR 600 .
+That is the counterpart to the modes
+.BR dots\-decrypt (1)
+enforces on the plaintext it writes back (0600, into a 0700 directory) and to
+the mode
+.BR dots\-verify (1)
+checks private keys for\(em it reports a key that is not
+.BR 600 ,
+but it changes no modes; the enforcement on install is
+.BR dots\-decrypt (1) 's.
+The 600 mode does not travel with the ciphertext: git records only the
+executable bit (the artifacts are committed as 100644), so a fresh clone
+checks them out as 0666 & ~umask \-\- 0644 under a normal umask \-\- on every
+machine other than the one where
+.B dots\-encrypt
+ran. Group\- and world\-readable ciphertext in a clone is therefore possible;
+what keeps the plaintext private is that only a holder of the age identity or
+the passphrase can decrypt, and that
+.B dots\-decrypt (1)
+re\-imposes 0600 when it writes the material back to its target.
+.SH DIAGNOSTICS
+Progress and error messages go to standard output. The two interactive prompts
+(the overwrite prompt and the
+.B "Could not infer target"
+prompt) are written to standard error by bash's
+.BR read (1p),
+which also only displays them when standard input is a terminal; their answers
+are always read from standard input. Notable messages:
+.TP
+.B "Warning: <relative path> exists. Overwrite? [y/N]"
+Both artifacts' paths are checked before any encryption; the second prompt
+only appears if the first is accepted. Any answer other than
+.B y
+or
+.B Y
+aborts with
+.BR "Aborted." " and exit status 1."
+.TP
+.B "Warning: No ~/.age/keys.txt on this machine \(em skipping age\-key verify."
+The identity is not present here, so only the passphrase copy was round\-trip
+checked.
+.TP
+.B "Warning: could not stage <file> \(em commit manually."
+.TP
+.B "Warning: files encrypted, but commit failed \(em commit manually."
+The auto\-commit is deliberately non\-fatal: on a fresh machine without a
+configured git identity, having already written the ciphertext must not fail
+the script.
+.SH EXAMPLES
+Encrypt an SSH private key, letting the script infer
+.IR secrets/ssh/id_ed25519.age
+plus its passphrase copy:
+.PP
+.RS
+.nf
+\&./scripts/encrypt.sh ~/.ssh/id_ed25519
+.fi
+.RE
+.PP
+Encrypt a token file to an explicit destination (the
+.B .age
+suffix is appended if missing):
+.PP
+.RS
+.nf
+\&./scripts/encrypt.sh ~/.config/tokens/github.pat secrets/tokens/github.pat.age
+.fi
+.RE
+.PP
+Via the
+.BR just (1)
+wrapper:
+.PP
+.RS
+.nf
+just encrypt "$HOME/.ssh/id_ed25519"
+.fi
+.RE
+.PP
+The recipe interpolates its argument inside double quotes
+.RB ( ./scripts/encrypt.sh\ \[dq]{{\ FILE\ }}\[dq] ),
+so
+.BR just (1)
+performs no tilde expansion and the argument reaches the script literally:
+a leading
+.B ~
+is not expanded (by the recipe shell, either) and the run fails with
+.BR "Error: File not found" .
+Supply a path that is already expanded \(em as above, or repo\-relative \(em
+rather than a bare tilde path.
+.PP
+Each run asks for the passphrase
+.B three
+times:
+.B age \-p
+prompts for it twice (entry, then confirmation) while encrypting the
+.B .phrase.age
+copy, and a third prompt is needed when that copy is decrypted again during
+verification.
+.SH SEE ALSO
+.BR dots\-decrypt (1),
+.BR dots\-setup (1),
+.BR dots\-verify (1),
+.BR age (1),
+.BR age\-keygen (1)

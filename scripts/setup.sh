@@ -332,6 +332,13 @@ install_node_tarball() {
         rm -rf "$tmp"
         return 1
     fi
+    # tar -C fails into a nonexistent directory — create it first (pristine
+    # Debian machines have no /usr/local/lib/nodejs)
+    if ! run_priv mkdir -p /usr/local/lib/nodejs; then
+        warn "Could not create /usr/local/lib/nodejs"
+        rm -rf "$tmp"
+        return 1
+    fi
     if ! run_priv tar -xJf "$tmp/$tarball" -C /usr/local/lib/nodejs; then
         warn "Could not extract the Node.js tarball"
         rm -rf "$tmp"
