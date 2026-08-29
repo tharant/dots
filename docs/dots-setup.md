@@ -66,7 +66,7 @@ Per-platform behaviour:
   (Homebrew must not call home; the macos platform layer sets the same vars
   for interactive shells), installs Homebrew itself when `brew` is missing (official
   installer, `NONINTERACTIVE=1`, run as the invoking user); installs `bash age
-  stow just tmux shellcheck git coreutils`, adds Homebrew's bash to
+  stow just tmux shellcheck git coreutils direnv`, adds Homebrew's bash to
   `/etc/shells`, and makes it the login shell with `chsh` (both non-fatal if
   they fail). The prefix is derived from the `brew` binary path, falling back
   to `/opt/homebrew` (arm64) or `/usr/local`.
@@ -74,11 +74,11 @@ Per-platform behaviour:
   `/etc/apk/repositories` (derived from the `main` line and appended; if the
   file or the mirror line is missing, the failure is recorded and the step is
   skipped rather than fatal), refreshes apk indexes, then installs `bash
-  coreutils findutils util-linux git age stow just tmux shellcheck shadow
+  coreutils findutils util-linux git age stow just tmux shellcheck direnv shadow
   bash-completion ncurses-terminfo curl ca-certificates` — plus `sudo` when
   neither sudo nor doas is present.
 - **Debian (apt-get)** — installs `git age stow tmux shellcheck bash coreutils
-  less locales ca-certificates curl wl-clipboard xz-utils`, then extras:
+  less locales ca-certificates curl wl-clipboard xz-utils direnv`, then extras:
   Node.js 22 from apt when the apt candidate is ≥ 22, otherwise the official
   `v22.23.2` tarball extracted into `/usr/local/lib/nodejs` (which the script
   creates with `mkdir -p` if missing) with `node`, `npm`, `npx` symlinked into
@@ -87,15 +87,41 @@ Per-platform behaviour:
   `en_US.UTF-8` generation via `locale-gen` (skipped with a recorded failure
   if `locale-gen` or `/etc/locale.gen` is missing).
 - **Other Linux** (dnf/pacman/pkg) — `git age stow just tmux shellcheck bash
-  coreutils curl ca-certificates`.
-- **FreeBSD** — `git age stow just tmux shellcheck bash coreutils curl
+  coreutils direnv curl ca-certificates`.
+- **FreeBSD** — `git age stow just tmux shellcheck bash coreutils direnv curl
   ca_root_nss` via `pkg`.
 
 Post-install: `git curl just tmux shellcheck` are each verified (a missing
-tool is a recorded non-fatal failure), a missing `stow` is **fatal**, and a
+tool is a recorded non-fatal failure), a missing `stow` is **fatal**, a
 missing `age` falls back to the static release `v1.3.1` installed to
 `~/.local/bin` (mode 0755), warning if that directory is not already on
-`PATH`.
+`PATH`, and a missing `direnv` falls back to the static release `v2.37.1`
+the same way — but as a **hard** requirement: if the fallback also fails the
+run aborts ("direnv is required for the direnv integration but could not be
+installed"), because the direnv stow package is useless without its hook
+binary.
+
+**Runtime managers.** After the post-install checks (macOS, Linux and WSL
+only — BSD is dotfiles-only and skips this step with an informational
+message) the run installs the three backends behind the
+[runtimes](runtimes.md) shim, each best-effort and recorded as a non-fatal
+failure on error, never aborting the run:
+
+- **uv** (python backend) via the official installer, run with
+  `UV_NO_MODIFY_PATH=1` so it never appends PATH lines to the shell RCs
+  (on a deployed machine those are stowed symlinks — a dirty-tree hazard);
+  binary at `~/.local/bin/uv`.
+- **fnm** (node backend) from the upstream `v1.39.0` release zips:
+  `fnm-macos.zip` is a universal (x86_64 + aarch64) binary, `fnm-linux.zip`
+  / `fnm-arm64.zip` are static musl binaries that run on Alpine and glibc
+  alike; `unzip` is installed on demand; binary at `~/.local/bin/fnm`.
+- **sdkman** (java backend) via the official installer. The installer
+  appends its init snippet to `~/.bashrc`, `~/.bash_profile` or `~/.zshrc`
+  — each file is snapshotted before the install and restored right after
+  (the .bashrc this repo ships already contains the identical snippet, so
+  the strip changes nothing functionally). Afterwards
+  `sdkman_auto_answer=true` is set in `~/.sdkman/etc/config` so the
+  `runtimes` shim's non-interactive `sdk install` never prompts.
 
 Stowing runs `stow -d <dir> -t $HOME --no-folding` over every package in
 `common/`, then the platform package directory (`macos/`, `linux/`, `bsd/`),
@@ -175,6 +201,9 @@ options.` and exits 1. A run can print plenty of WARNING lines and still exit
 - `/etc/locale.gen` — enabled for `en_US.UTF-8` on Debian.
 - `/etc/shells` — appended with Homebrew's bash on macOS.
 - `~/.local/bin/age`, `~/.local/bin/age-keygen` — static age fallback (0755).
+- `~/.local/bin/direnv` — static direnv fallback (0755).
+- `~/.local/bin/uv`, `~/.local/bin/fnm` — runtime-manager installs (macOS/Linux/WSL).
+- `~/.sdkman/` — sdkman install, with `sdkman_auto_answer=true` in `etc/config`.
 - `/usr/local/bin/just`, `/usr/local/lib/nodejs/` — static just / Node.js fallbacks (Debian).
 - `scripts/decrypt.sh`, `scripts/verify.sh` — invoked for the decrypt and verify steps.
 - `.githooks/` — set as `core.hooksPath` after clone or pull.

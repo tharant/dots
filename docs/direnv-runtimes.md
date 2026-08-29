@@ -2,7 +2,7 @@
 
 Feature guide for the direnv integration shipped in `common/direnv/` (stowed
 to `~/.config/direnv/` and `~/.envrc`) and the [`runtimes`
-CLI](dots-runtimes.md) (`~/bin/runtimes`). Together they recreate the old
+CLI](runtimes.md) (`~/bin/runtimes`). Together they recreate the old
 workflow: `cd` anywhere, get folder-level env vars; `.envrc`s stack up the
 directory tree; runtimes (python, node, java) are pinned per project and
 installed automatically the first time you `cd` in.
@@ -62,7 +62,7 @@ java 21.0.12+1.1-tem # exact sdkman candidate IDs also accepted
 
 Supported names: `python`, `node`, `java` (anything else logs
 `unknown runtime '…'`). Resolution is the CLI's job —
-[runtimes(1)](dots-runtimes.md) — and happens only at install time; `.envrc`
+[runtimes(1)](runtimes.md) — and happens only at install time; `.envrc`
 evaluation reads the resulting `.runtimes.lock` and never the network.
 
 `.runtimes.lock` sits next to `.runtimesrc` and records the concrete
@@ -144,7 +144,7 @@ per-subtree) `.envrc` files instead of editing it.
 ## Templates (`use_template`)
 
 `use_template <name>` expands a repo template into `$PWD` via
-`runtimes template` ([runtimes(1)](dots-runtimes.md) has the full rules).
+`runtimes template` ([runtimes(1)](runtimes.md) has the full rules).
 
 - `templates/<name>/` is the tree; `templates/<name>.template` is its
   manifest: `description=`, `substitute=` (space-separated var names),
@@ -199,7 +199,7 @@ file, and a `notes.local` the manifest ignores.
 
 ## See also
 
-[runtimes(1)](dots-runtimes.md) — the CLI half: subcommands, backends, lock
+[runtimes(1)](runtimes.md) — the CLI half: subcommands, backends, lock
 file, platform matrix · [dots-setup(1)](dots-setup.md) — installs direnv,
 uv, fnm, sdkman · [dots-verify(1)](dots-verify.md) — checks the hook, the
 direnvrc and the shim

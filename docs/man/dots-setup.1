@@ -102,7 +102,7 @@ set to 1 (Homebrew must not call home). Installs Homebrew itself when
 is missing (official installer with
 .BR "NONINTERACTIVE=1" ,
 run as the invoking user). Then installs bash, age, stow, just,
-tmux, shellcheck, git, coreutils. Then installs Homebrew's bash into
+tmux, shellcheck, git, coreutils, direnv. Then installs Homebrew's bash into
 .I /etc/shells
 and makes it the login shell with
 .B chsh
@@ -124,13 +124,14 @@ repository is enabled in
 line and appending it if absent; missing files or mirrors are recorded as
 non\-fatal failures), refreshes apk indexes, then installs bash,
 coreutils, findutils, util\-linux, git, age, stow, just, tmux, shellcheck,
-shadow, bash\-completion, ncurses\-terminfo, curl, ca\-certificates \- and
+direnv, shadow, bash\-completion, ncurses\-terminfo, curl, ca\-certificates
+\- and
 .B sudo
 as well when neither sudo nor doas is present.
 .TP
 .B Linux (Debian, apt\-get)
 Installs git, age, stow, tmux, shellcheck, bash, coreutils, less, locales,
-ca\-certificates, curl, wl\-clipboard, xz\-utils, then extras: Node.js
+ca\-certificates, curl, wl\-clipboard, xz\-utils, direnv, then extras: Node.js
 (from apt when the candidate is version 22 or newer, otherwise the
 official v22.23.2 tarball extracted into
 .I /usr/local/lib/nodejs
@@ -155,23 +156,58 @@ locale via
 .BR locale\-gen .
 .TP
 .B Linux (other)
-Installs git, age, stow, just, tmux, shellcheck, bash, coreutils, curl,
-ca\-certificates with whichever of dnf, pacman or pkg is detected.
+Installs git, age, stow, just, tmux, shellcheck, bash, coreutils, direnv,
+curl, ca\-certificates with whichever of dnf, pacman or pkg is detected.
 .TP
 .B bsd
-Installs git, age, stow, just, tmux, shellcheck, bash, coreutils, curl,
-ca_root_nss via
+Installs git, age, stow, just, tmux, shellcheck, bash, coreutils, direnv,
+curl, ca_root_nss via
 .BR pkg .
 .PP
 After the platform\-specific installs, a post\-install check verifies git,
 curl, just, tmux and shellcheck (each missing tool is recorded as a
 non\-fatal failure), treats a missing
 .B stow
-as fatal, and falls back to a static age release (v1.3.1) installed to
+as fatal, falls back to a static age release (v1.3.1) installed to
 .I ~/.local/bin
 when no
 .B age
-binary exists.
+binary exists, and falls back to a static direnv release (v2.37.1) the same
+way when no
+.B direnv
+binary exists \- but direnv is a hard requirement: if the fallback also
+fails the run aborts, because the direnv stow package is useless without its
+hook binary.
+.PP
+Runtime managers (macOS, Linux and WSL only; BSD is dotfiles\-only and skips
+this step with an informational message): after the post\-install checks the
+run installs the three backends behind the
+.B runtimes
+shim, each best\-effort and recorded as a non\-fatal failure on error.
+.B uv
+(python backend) via the official installer, run with
+.B UV_NO_MODIFY_PATH=1
+so it never appends PATH lines to the shell RCs (on a deployed machine
+those are stowed symlinks \- a dirty\-tree hazard); binary at
+.IR ~/.local/bin/uv .
+.B fnm
+(node backend) from the upstream v1.39.0 release zips:
+.I fnm\-macos.zip
+is a universal (x86_64 + aarch64) binary, the linux zips are static musl
+binaries that run on Alpine and glibc alike, with
+.B unzip
+installed on demand; binary at
+.IR ~/.local/bin/fnm .
+.BR sdkman ,
+(java backend) via the official installer: each shell RC it may append its
+init snippet to is snapshotted before the install and restored right after
+(the .bashrc this repo ships already contains the identical snippet), and
+.B sdkman_auto_answer=true
+is set in
+.I ~/.sdkman/etc/config
+so the shim's non\-interactive
+.B "sdk install"
+never prompts.
 .PP
 Repository handling: if
 .I $DOTS_DIR/.git
@@ -373,6 +409,18 @@ Static age fallback location (mode 0755); a warning suggests adding the
 directory to
 .B PATH
 if it is not already there.
+.TP
+.I ~/.local/bin/direnv
+Static direnv fallback location (0755).
+.TP
+.I ~/.local/bin/uv ", " ~/.local/bin/fnm
+Runtime\-manager binaries (macOS/Linux/WSL only).
+.TP
+.I ~/.sdkman/
+sdkman install, with
+.B sdkman_auto_answer=true
+set in
+.IR etc/config .
 .TP
 .I /usr/local/bin/just ", " /usr/local/lib/nodejs
 Static just and Node.js fallback locations (Debian only); the extraction
