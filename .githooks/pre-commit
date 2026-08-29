@@ -9,23 +9,24 @@ if ! command -v shellcheck &>/dev/null; then
   exit 0
 fi
 
-# Collect staged bash files (scripts + dotfiles)
+# Collect staged bash files (scripts + dotfiles).
+# Portable loop instead of mapfile (bash 3.2 on macOS has no mapfile; it would
+# silently leave `files` empty).
 # Vendored third-party code (vim plugins, trueline) is shipped verbatim — skip it.
-mapfile -t files < <(
-  git diff --cached --name-only --diff-filter=ACM | while read -r f; do
-    case "$f" in
-      common/vim/.vim/bundle/*) continue ;;
-      common/trueline/*)         continue ;;
-      *.sh)           echo "$f" ;;
-      */.bashrc)      echo "$f" ;;
-      */.bash_profile) echo "$f" ;;
-      */.bash_aliases) echo "$f" ;;
-      */.bash_functions) echo "$f" ;;
-      */.bash_sensible) echo "$f" ;;
-      */.bash_linux)  echo "$f" ;;
-    esac
-  done
-)
+files=()
+while IFS= read -r -d '' f; do
+  case "$f" in
+    common/vim/.vim/bundle/*) continue ;;
+    common/trueline/*)        continue ;;
+    *.sh)                     files+=("$f") ;;
+    */.bashrc)                files+=("$f") ;;
+    */.bash_profile)          files+=("$f") ;;
+    */.bash_aliases)          files+=("$f") ;;
+    */.bash_functions)        files+=("$f") ;;
+    */.bash_sensible)         files+=("$f") ;;
+    */.bash_linux)            files+=("$f") ;;
+  esac
+done < <(git diff --cached --name-only -z --diff-filter=ACM)
 
 if [[ ${#files[@]} -eq 0 ]]; then
   exit 0

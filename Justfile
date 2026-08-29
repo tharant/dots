@@ -43,21 +43,36 @@ decrypt:
 lint:
   #!/usr/bin/env bash
   set -euo pipefail
+  if ! command -v shellcheck >/dev/null 2>&1; then
+    echo "lint: shellcheck is not installed — skipping."
+    echo "  (install with: brew install shellcheck | apt install shellcheck | apk add shellcheck)"
+    exit 0
+  fi
   files=()
   while IFS= read -r -d '' f; do
     files+=("$f")
   done < <(find scripts -name '*.sh' -print0)
   while IFS= read -r -d '' f; do
     files+=("$f")
-  done < <(find common linux macos bsd -type f \( -name '.bash*' -o -name '.profile' \) -print0 2>/dev/null)
+  done < <(find common macos linux bsd alpine wsl -type f \( -name '.bash*' -o -name '.profile' \) -print0 2>/dev/null)
+  if [[ ${#files[@]} -eq 0 ]]; then
+    echo "lint: nothing to check."
+    exit 0
+  fi
   echo "Checking ${#files[@]} files..."
   shellcheck -e SC1090,SC1091,SC2148 "${files[@]}"
   echo "All files passed."
 
 # Scaffold a new stow package directory
 add-package PLATFORM NAME:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  case "{{ PLATFORM }}" in
+    common|macos|linux|bsd|alpine|wsl) ;;
+    *) echo "add-package: unknown platform '{{ PLATFORM }}' (expected one of: common macos linux bsd alpine wsl)"; exit 1 ;;
+  esac
   mkdir -p "{{ PLATFORM }}/{{ NAME }}"
-  @echo "Created {{ PLATFORM }}/{{ NAME }}/ — add dotfiles mirroring \$HOME layout."
+  echo "Created {{ PLATFORM }}/{{ NAME }}/ — add dotfiles mirroring \$HOME layout."
 
 # --- Info ---
 
@@ -76,10 +91,12 @@ status:
     for pkg in "$dir"/*/; do
       [[ -d "$pkg" ]] || continue
       name=$(basename "$pkg")
-      if stow -d "$dir" -t "$HOME" --no-folding -n "$name" 2>&1 | grep -q 'WARNING'; then
-        echo "CONFLICT $dir/$name"
-      else
+      # stow's exit code is the source of truth; print its actual warnings
+      if out=$(stow -d "$dir" -t "$HOME" --no-folding -n "$name" 2>&1); then
         echo "      ok $dir/$name"
+      else
+        echo "CONFLICT $dir/$name"
+        printf '%s\n' "$out" | sed 's/^/        /'
       fi
     done
   done

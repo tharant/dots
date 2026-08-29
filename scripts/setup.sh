@@ -2,21 +2,48 @@
 set -euo pipefail
 
 # Bootstrap script for setting up dotfiles on a new machine.
+#
 # Can be run via: curl -fsSL https://raw.githubusercontent.com/USER/dots/main/scripts/setup.sh | bash
 # Or after cloning: ./scripts/setup.sh
+#
+# Privilege policy: commands run directly as root; otherwise sudo is used, then
+# doas. With neither (and not root) the script aborts with a clear message.
+#
+# Alpine bootstrap (busybox-only base image): this script needs bash, git and
+# curl up front, so on a bare Alpine box run the two-step bootstrap:
+#     apk add bash git curl
+#     ./scripts/setup.sh        # or: wget -qO- <setup.sh url> | bash
+#
+# Blessed targets: macOS 14+, Debian bookworm & trixie, Alpine 3.22+ (including
+# the WSL2 flavours), FreeBSD best effort.
 
 REPO_URL="${DOTS_REPO_URL:-https://github.com/tharant/dots.git}"
 DOTS_DIR="${DOTS_DIR:-$HOME/.dots}"
 FORCE="${FORCE:-false}"
 
+PLATFORM=""
+DISTRO=""
+ENV=""            # environment layer: "wsl" (distro layers live in DISTRO)
+PKG_MGR=""
+SUDO=""
+APT_UPDATED=""
+SUCCESS_MSG="Dotfiles deployed."
+
 usage() {
-    echo "Usage: $(basename "$0") [--restow] [--adopt] [--unstow] [--force] [--verify]"
-    echo "  (no args)   Full bootstrap: install deps, clone, decrypt, stow"
-    echo "  --restow    Re-stow all packages (use after git pull)"
-    echo "  --adopt     Adopt existing files into the repo, then re-stow"
-    echo "  --unstow    Remove all symlinks managed by stow"
-    echo "  --force     Force re-decrypt and re-stow (skip freshness checks)"
-    echo "  --verify    Run verification checks on current deployment"
+    cat <<EOF
+Usage: $(basename "$0") [--restow] [--adopt] [--unstow] [--force] [--verify]
+  (no args)   Full bootstrap: install deps, clone, decrypt, stow
+  --restow    Re-stow all packages (use after git pull)
+  --adopt     Adopt existing files into the repo, then re-stow
+  --unstow    Remove all symlinks managed by stow
+  --force     Force re-decrypt and re-stow (skip freshness checks)
+  --verify    Run verification checks on current deployment
+
+Privileges: run as root, or with sudo/doas available.
+
+Alpine note: on a bare Alpine system the script needs bash, git and curl first:
+  apk add bash git curl
+EOF
     exit 0
 }
 
@@ -44,6 +71,32 @@ report_failures() {
     fi
 }
 
+finish() {
+    if report_failures; then
+        info "Done! $SUCCESS_MSG"
+        info "Log out and back in (or source ~/.bashrc) for changes to take effect."
+    else
+        # exit (not return) so the ERR trap does not print a second message
+        exit 1
+    fi
+}
+
+command_exists() { command -v "$1" &>/dev/null; }
+
+download() {
+    # download <url> <output-file> — curl first, busybox wget as fallback
+    if command_exists curl; then
+        curl -fsSL "$1" -o "$2"
+    elif command_exists wget; then
+        wget -qO "$2" "$1"
+    else
+        warn "Neither curl nor wget is available — cannot download $1"
+        return 1
+    fi
+}
+
+# --- Environment, privilege, tty ---
+
 detect_platform() {
     case "$(uname -s)" in
         Darwin) echo "macos" ;;
@@ -53,124 +106,479 @@ detect_platform() {
     esac
 }
 
-command_exists() { command -v "$1" &>/dev/null; }
+detect_env() {
+    PLATFORM="$(detect_platform)"
+    info "Detected platform: $PLATFORM"
 
-# --- Install dependencies ---
-
-install_age() {
-    if command_exists age; then
-        info "age already installed"
-        return
+    # Distro (only meaningful on Linux)
+    if [[ -r /etc/os-release ]]; then
+        # shellcheck source=/dev/null
+        . /etc/os-release
+        DISTRO="${ID:-}"
+    fi
+    if [[ "$PLATFORM" == "linux" && -n "$DISTRO" ]]; then
+        info "Detected distro: $DISTRO"
     fi
 
-    info "Installing age..."
-    case "$PLATFORM" in
-        macos)
-            if command_exists brew; then
-                brew install age
-            else
-                error "Homebrew not found. Install from https://brew.sh first, or install age manually."
-            fi
-            ;;
-        linux)
-            if command_exists apt-get; then
-                sudo apt-get update && sudo apt-get install -y age
-            elif command_exists dnf; then
-                sudo dnf install -y age
-            elif command_exists pacman; then
-                sudo pacman -S --noconfirm age
-            else
-                error "No supported package manager found. Install age manually."
-            fi
-            ;;
-        bsd)
-            if command_exists pkg; then
-                sudo pkg install -y age
-            else
-                error "pkg not found. Install age manually."
-            fi
-            ;;
+    # WSL: either the distro name env var is set or the kernel says Microsoft
+    if [[ -n "${WSL_DISTRO_NAME:-}" ]] || grep -qi microsoft /proc/version 2>/dev/null; then
+        ENV="wsl"
+        info "Detected environment: WSL"
+    fi
+
+    # Informational only: OrbStack on macOS exposes a WSL-like layer
+    case "$(uname -r)" in
+        *orbstack*|*OrbStack*) info "Detected environment: OrbStack" ;;
     esac
 }
 
-install_stow() {
-    if command_exists stow; then
-        info "GNU Stow already installed"
-        return
+detect_privilege() {
+    if [[ $EUID -eq 0 ]]; then
+        SUDO=""
+        info "Running as root — no privilege escalation needed"
+    elif command_exists sudo; then
+        SUDO="sudo"
+    elif command_exists doas; then
+        SUDO="doas"
+    else
+        SUDO=""
+        warn "Not root and neither sudo nor doas is installed — steps needing"
+        warn "root will abort until you install one or run as root."
+    fi
+}
+
+require_priv() {
+    if [[ $EUID -ne 0 && -z "$SUDO" ]]; then
+        error "Root privileges are required but neither sudo nor doas is available. Install one (apk/apt/dnf/pacman install sudo) or run as root."
+    fi
+}
+
+run_priv() {
+    # Same as "$SUDO $@" unless already root, where the prefix is empty
+    if [[ $EUID -eq 0 ]]; then
+        "$@"
+    else
+        "$SUDO" "$@"
+    fi
+}
+
+reattach_tty() {
+    # `curl ... | bash` leaves stdin on the pipe; age's passphrase prompt (and
+    # chsh) need a real TTY, so reattach to /dev/tty when stdin is not one.
+    # Guard with a test open too: /dev/tty exists but opening it fails (ENXIO)
+    # when there is no controlling terminal at all (CI, non-interactive jobs).
+    if [[ ! -t 0 ]]; then
+        if { : </dev/tty; } 2>/dev/null; then
+            exec 0</dev/tty
+        fi
+    fi
+}
+
+# --- Package installation ---
+
+detect_pkg_mgr() {
+    if [[ -n "$PKG_MGR" ]]; then
+        return 0
+    fi
+    local m
+    for m in brew apt-get dnf pacman apk pkg; do
+        if command_exists "$m"; then
+            PKG_MGR="$m"
+            info "Detected package manager: $PKG_MGR"
+            return 0
+        fi
+    done
+    error "No supported package manager found (brew, apt-get, dnf, pacman, apk, pkg). Install dependencies manually."
+}
+
+pkg_install() {
+    # pkg_install pkg... — install packages with the detected package manager
+    if [[ $# -eq 0 ]]; then
+        return 0
+    fi
+    detect_pkg_mgr
+
+    # apt needs its lists refreshed once, before the first install
+    if [[ "$PKG_MGR" == "apt-get" && "$APT_UPDATED" != "true" ]]; then
+        info "Updating apt package lists..."
+        run_priv apt-get update
+        APT_UPDATED=true
     fi
 
-    info "Installing GNU Stow..."
-    case "$PLATFORM" in
-        macos)  brew install stow ;;
-        linux)
-            if command_exists apt-get; then
-                sudo apt-get install -y stow
-            elif command_exists dnf; then
-                sudo dnf install -y stow
-            elif command_exists pacman; then
-                sudo pacman -S --noconfirm stow
-            fi
-            ;;
-        bsd)    sudo pkg install -y stow ;;
+    case "$PKG_MGR" in
+        brew)    brew install "$@" ;;                      # brew must not run as root
+        apt-get) run_priv apt-get install -y "$@" ;;
+        dnf)     run_priv dnf install -y "$@" ;;
+        pacman)  run_priv pacman -S --noconfirm "$@" ;;
+        apk)     run_priv apk add "$@" ;;
+        pkg)     run_priv pkg install -y "$@" ;;
+        *)       error "Unsupported package manager: $PKG_MGR" ;;
     esac
 }
 
-install_just() {
+# Install a set of packages; on a batch failure retry one by one, so a single
+# missing or renamed package does not take the whole set down with it.
+pkg_install_set() {
+    if pkg_install "$@"; then
+        return 0
+    fi
+    warn "Batch install failed — retrying packages individually"
+    local p
+    for p in "$@"; do
+        pkg_install "$p" || FAILURES+=("install: $p")
+    done
+    return 0
+}
+
+ensure_tool() {
+    # ensure_tool <command> [package] — install a package only if its binary is missing
+    local cmd="$1"
+    local pkg="${2:-$1}"
+    if command_exists "$cmd"; then
+        info "$cmd already installed"
+        return 0
+    fi
+    info "Installing $pkg..."
+    pkg_install "$pkg"
+}
+
+# --- Static binary fallbacks ---
+
+install_age_binary() {
+    # Upstream static age release, for when no package is available
+    local version="v1.3.1"
+    local os="" arch="" url tmp
+
+    case "$PLATFORM" in
+        linux) os="linux" ;;
+        macos) os="darwin" ;;
+        bsd)   os="freebsd" ;;
+        *)     warn "No prebuilt age release for platform '$PLATFORM'"; return 1 ;;
+    esac
+    case "$(uname -m)" in
+        x86_64|amd64)        arch="amd64" ;;
+        aarch64|arm64|armv8) arch="arm64" ;;
+        *)                   warn "No prebuilt age release for architecture '$(uname -m)'"; return 1 ;;
+    esac
+
+    url="https://github.com/FiloSottile/age/releases/download/$version/age-$version-$os-$arch.tar.gz"
+    info "Installing age from static release: $url"
+    tmp="$(mktemp -d)"
+    if ! download "$url" "$tmp/age.tar.gz"; then
+        rm -rf "$tmp"
+        return 1
+    fi
+    if ! tar -xzf "$tmp/age.tar.gz" -C "$tmp"; then
+        warn "Could not extract the age release tarball"
+        rm -rf "$tmp"
+        return 1
+    fi
+    mkdir -p "$HOME/.local/bin"
+    install -m 0755 "$tmp/age/age" "$HOME/.local/bin/age"
+    install -m 0755 "$tmp/age/age-keygen" "$HOME/.local/bin/age-keygen"
+    rm -rf "$tmp"
+    case ":$PATH:" in
+        *":$HOME/.local/bin:"*) ;;
+        *) warn "Add $HOME/.local/bin to PATH: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+    esac
+    info "Installed age to $HOME/.local/bin"
+}
+
+install_just_binary() {
+    # just is not packaged for Debian bookworm — use the upstream musl binary
+    local version="1.58.0"
+    local arch="" target url tmp
+
+    case "$(uname -m)" in
+        x86_64)  arch="x86_64" ;;
+        aarch64) arch="aarch64" ;;
+        *)       warn "No prebuilt just release for architecture '$(uname -m)'"; return 1 ;;
+    esac
+    target="${arch}-unknown-linux-musl"
+    url="https://github.com/casey/just/releases/download/$version/just-$version-$target.tar.gz"
+
+    info "Installing just from static release: $url"
+    tmp="$(mktemp -d)"
+    if ! download "$url" "$tmp/just.tar.gz"; then
+        rm -rf "$tmp"
+        return 1
+    fi
+    if ! tar -xzf "$tmp/just.tar.gz" -C "$tmp"; then
+        warn "Could not extract the just release tarball"
+        rm -rf "$tmp"
+        return 1
+    fi
+    run_priv install -m 0755 "$tmp/just" /usr/local/bin/just
+    rm -rf "$tmp"
+    info "Installed just to /usr/local/bin"
+}
+
+install_node_tarball() {
+    # Node.js 22 from the official dist tarball (bookworm tops out at Node 18)
+    local version="v22.23.2"
+    local arch="" tarball url tmp
+
+    case "$(uname -m)" in
+        x86_64)        arch="x64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        *)             warn "No Node.js tarball for architecture '$(uname -m)'"; return 1 ;;
+    esac
+    tarball="node-$version-linux-$arch.tar.xz"
+    url="https://nodejs.org/dist/$version/$tarball"
+
+    info "Installing Node.js $version from the official tarball: $url"
+    tmp="$(mktemp -d)"
+    if ! download "$url" "$tmp/$tarball"; then
+        rm -rf "$tmp"
+        return 1
+    fi
+    if ! run_priv tar -xJf "$tmp/$tarball" -C /usr/local/lib/nodejs; then
+        warn "Could not extract the Node.js tarball"
+        rm -rf "$tmp"
+        return 1
+    fi
+    rm -rf "$tmp"
+    local b
+    for b in node npm npx; do
+        run_priv ln -sfn "/usr/local/lib/nodejs/node-$version-linux-$arch/bin/$b" "/usr/local/bin/$b"
+    done
+    info "Installed Node.js to /usr/local/lib/nodejs (symlinks in /usr/local/bin)"
+}
+
+# --- Per-platform core installs ---
+
+macos_default_shell() {
+    # Hand the login shell over to Homebrew's bash; idempotent and non-fatal
+    local brew_bin brew_prefix bash_path arch
+    brew_bin="$(command -v brew || true)"
+    arch="$(uname -m)"
+    if [[ -n "$brew_bin" ]]; then
+        brew_prefix="$(dirname "$(dirname "$brew_bin")")"   # /usr/local/bin/brew -> /usr/local
+    elif [[ "$arch" == "arm64" ]]; then
+        brew_prefix="/opt/homebrew"
+    else
+        brew_prefix="/usr/local"
+    fi
+    bash_path="$brew_prefix/bin/bash"
+    if [[ ! -x "$bash_path" ]]; then
+        warn "Homebrew bash not found at $bash_path — keeping the current login shell"
+        return 0
+    fi
+
+    if ! grep -qxF "$bash_path" /etc/shells 2>/dev/null; then
+        info "Adding $bash_path to /etc/shells"
+        echo "$bash_path" | run_priv tee -a /etc/shells >/dev/null \
+            || { warn "Could not write $bash_path to /etc/shells"; FAILURES+=("macos: /etc/shells"); }
+    fi
+
+    if [[ "${SHELL:-}" == "$bash_path" ]]; then
+        info "Default login shell is already $bash_path"
+    else
+        info "Setting default login shell to $bash_path (may prompt for your password)"
+        if ! chsh -s "$bash_path"; then
+            warn "Could not change the default shell — run manually: chsh -s $bash_path"
+            FAILURES+=("macos: chsh")
+        fi
+    fi
+}
+
+alpine_prepare() {
+    # age, stow, just and shellcheck all live in the community repository
+    if [[ ! -f /etc/apk/repositories ]]; then
+        warn "/etc/apk/repositories not found — cannot check for the community repo"
+        FAILURES+=("alpine: repositories file missing")
+        return 0
+    fi
+    if ! grep -qE '^[^#].*/community' /etc/apk/repositories; then
+        local main_line
+        main_line="$(grep -m1 -E '^[^#].*/main' /etc/apk/repositories || true)"
+        if [[ -z "$main_line" ]]; then
+            warn "Could not determine the Alpine mirror from /etc/apk/repositories"
+            warn "Add the matching community repository manually, then re-run."
+            FAILURES+=("alpine: community repository")
+            return 0
+        fi
+        warn "Alpine 'community' repository is not enabled — appending it"
+        echo "${main_line%/main}/community" | run_priv tee -a /etc/apk/repositories >/dev/null
+    fi
+    info "Refreshing apk indexes..."
+    run_priv apk update
+}
+
+apt_candidate_version() {
+    # The version apt would install, or empty when the package is unavailable
+    apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/ {print $2; exit}'
+}
+
+install_debian_extra() {
+    # Debian extras: Node.js 22, just (bookworm only has neither), UTF-8 locale
+    local ver major
+
+    ver="$(apt_candidate_version nodejs)"
+    major="${ver#v}"
+    major="${major%%.*}"
+    case "$major" in
+        ''|*[!0-9]*) major="" ;;
+    esac
+    if [[ -n "$major" && "$major" -ge 22 ]]; then
+        info "apt has Node.js $ver — installing nodejs/npm from apt"
+        pkg_install_set nodejs npm
+    else
+        info "apt Node.js is ${ver:-<none>}, need >= 22 — using the official Node.js tarball"
+        install_node_tarball || FAILURES+=("install: nodejs tarball")
+    fi
+
     if command_exists just; then
         info "just already installed"
-        return
+    elif [[ -n "$(apt_candidate_version just)" ]]; then
+        if ! pkg_install just; then
+            warn "apt install failed for just — falling back to the upstream binary"
+            install_just_binary || FAILURES+=("install: just (static binary)")
+        fi
+    else
+        install_just_binary || FAILURES+=("install: just (static binary)")
     fi
 
-    info "Installing just..."
+    install_utf8_locale
+}
+
+install_utf8_locale() {
+    # Enable en_US.UTF-8 non-interactively right after installing locales
+    if ! command_exists locale-gen; then
+        warn "locale-gen not available — skipping en_US.UTF-8 generation"
+        FAILURES+=("locales: locale-gen missing")
+        return 0
+    fi
+    if locale -a 2>/dev/null | grep -qi '^en_US.utf8$'; then
+        info "Locale en_US.UTF-8 is already generated"
+        return 0
+    fi
+    info "Enabling the en_US.UTF-8 locale..."
+    if ! [[ -f /etc/locale.gen ]]; then
+        warn "/etc/locale.gen not found — skipping en_US.UTF-8 generation"
+        FAILURES+=("locales: /etc/locale.gen missing")
+        return 0
+    fi
+    if grep -qi '^en_US.UTF-8 UTF-8' /etc/locale.gen; then
+        info "en_US.UTF-8 already enabled in /etc/locale.gen"
+    elif grep -qi '^# *en_US.UTF-8 UTF-8' /etc/locale.gen; then
+        run_priv sed -i 's/^#[[:space:]]*en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+    else
+        echo 'en_US.UTF-8 UTF-8' | run_priv tee -a /etc/locale.gen >/dev/null
+    fi
+    run_priv locale-gen || {
+        warn "locale-gen failed — set LANG manually if the shell looks broken"
+        FAILURES+=("locales: en_US.UTF-8")
+    }
+}
+
+post_install_checks() {
+    # Never fail silently: verify the tools the rest of the run depends on
+    local tool
+    for tool in git curl just tmux shellcheck; do
+        if ! command_exists "$tool"; then
+            warn "Expected tool '$tool' is still missing after install"
+            FAILURES+=("missing: $tool")
+        fi
+    done
+    if ! command_exists stow; then
+        error "GNU Stow is required to deploy the dotfiles but could not be installed."
+    fi
+    if ! command_exists age; then
+        install_age_binary || FAILURES+=("install: age (static binary fallback)")
+    fi
+}
+
+install_core() {
+    detect_pkg_mgr
+
     case "$PLATFORM" in
         macos)
-            if command_exists brew; then
-                brew install just
-            else
-                error "Homebrew not found. Install from https://brew.sh first, or install just manually."
+            if ! command_exists brew; then
+                error "Homebrew not found. Install it from https://brew.sh first, then re-run."
             fi
+            info "Installing core packages via Homebrew..."
+            pkg_install_set bash age stow just tmux shellcheck git coreutils
+            macos_default_shell
             ;;
         linux)
-            if command_exists apt-get; then
-                sudo apt-get install -y just 2>/dev/null || {
-                    warn "just not in apt repos — install manually from https://github.com/casey/just"
-                    FAILURES+=("install: just")
-                    return
-                }
-            elif command_exists dnf; then
-                sudo dnf install -y just 2>/dev/null || {
-                    warn "just not in dnf repos — install manually"
-                    FAILURES+=("install: just")
-                    return
-                }
-            elif command_exists pacman; then
-                sudo pacman -S --noconfirm just
+            if [[ "$DISTRO" == "alpine" ]]; then
+                alpine_prepare
+                info "Installing core packages via apk..."
+                local alpine_pkgs=(bash coreutils findutils util-linux git age stow just tmux
+                    shellcheck shadow bash-completion ncurses-terminfo curl ca-certificates)
+                # Keep doas-only systems doas-only
+                if ! command_exists sudo && ! command_exists doas; then
+                    alpine_pkgs+=(sudo)
+                fi
+                pkg_install_set "${alpine_pkgs[@]}"
+            elif [[ "$PKG_MGR" == "apt-get" ]]; then
+                info "Installing core packages via apt..."
+                pkg_install_set git age stow tmux shellcheck bash coreutils less \
+                    locales ca-certificates curl wl-clipboard xz-utils
+                install_debian_extra
             else
-                warn "No supported package manager found. Install just manually."
-                FAILURES+=("install: just")
+                info "Installing core packages..."
+                pkg_install_set git age stow just tmux shellcheck bash coreutils curl ca-certificates
             fi
             ;;
         bsd)
-            if command_exists pkg; then
-                sudo pkg install -y just
-            else
-                warn "pkg not found. Install just manually."
-                FAILURES+=("install: just")
-            fi
+            info "Installing core packages via pkg..."
+            pkg_install_set git age stow just tmux shellcheck bash coreutils curl ca_root_nss
             ;;
     esac
+
+    post_install_checks
+}
+
+preflight_checks() {
+    info "Checking preflight requirements..."
+    if ! command_exists git; then
+        info "Installing git..."
+        pkg_install git || FAILURES+=("install: git")
+    fi
+    if ! command_exists curl; then
+        if [[ "$DISTRO" == "alpine" ]] && command_exists wget; then
+            info "curl is missing — downloads will fall back to busybox wget"
+        else
+            warn "curl is missing — release-tarball fallbacks need it"
+            FAILURES+=("preflight: curl missing")
+        fi
+    fi
+    if [[ "$DISTRO" == "alpine" && -z "${BASH_VERSION:-}" ]]; then
+        error "Alpine: this script must run under bash (apk add bash git curl, then re-run)"
+    fi
 }
 
 # --- Clone or update repo ---
 
+require_repo() {
+    if [[ ! -d "$DOTS_DIR/.git" ]]; then
+        error "Repo is not cloned at $DOTS_DIR — run '$(basename "$0")' with no arguments first."
+    fi
+}
+
 setup_repo() {
     if [[ -d "$DOTS_DIR/.git" ]]; then
         info "Repo exists at $DOTS_DIR, pulling latest..."
-        git -C "$DOTS_DIR" pull --ff-only
+        if [[ -n "$(git -C "$DOTS_DIR" status --porcelain)" ]]; then
+            warn "Repo has local changes — pulling with --autostash"
+            git -C "$DOTS_DIR" pull --ff-only --autostash || {
+                warn "Pull failed — keeping the current checkout"
+                FAILURES+=("git pull")
+            }
+        else
+            git -C "$DOTS_DIR" pull --ff-only || {
+                warn "Pull failed — keeping the current checkout"
+                FAILURES+=("git pull")
+            }
+        fi
     else
         info "Cloning dotfiles repo..."
         git clone "$REPO_URL" "$DOTS_DIR"
     fi
+    # Make sure the repo's hook directory stays active (shellcheck gate)
+    git -C "$DOTS_DIR" config core.hooksPath .githooks
 }
 
 # --- Decrypt secrets ---
@@ -182,83 +590,104 @@ decrypt_secrets() {
 
 # --- Stow dotfiles ---
 
+stow_one_dir() {
+    local base_dir="$1"
+    local label="$2"
+    local action_msg="$3"
+    local found=0
+    local pkg pkg_name
+
+    for pkg in "$base_dir"/*/; do
+        [[ -d "$pkg" ]] || continue
+        if [[ $found -eq 0 ]]; then
+            found=1
+            info "$action_msg $label configs..."
+        fi
+        pkg_name="$(basename "$pkg")"
+        info "  $action_msg $pkg_name"
+        if ! stow -d "$base_dir" -t "$HOME" --no-folding "${STOW_FLAGS[@]}" "$pkg_name"; then
+            warn "Failed to stow $pkg_name — continuing with remaining packages"
+            FAILURES+=("stow: $pkg_name")
+        fi
+    done
+}
+
 stow_packages() {
-    local stow_flags=("--no-folding")
-    local action_label="Stowing"
+    STOW_FLAGS=("--no-folding")
+    local action_msg="Stowing"
 
     case "${1:-}" in
-        --restow) stow_flags+=("--restow"); action_label="Re-stowing" ;;
-        --adopt)  stow_flags+=("--adopt");  action_label="Adopting + stowing" ;;
-        --unstow) stow_flags=("--delete");  action_label="Unstowing" ;;
+        --restow) STOW_FLAGS+=("--restow"); action_msg="Re-stowing" ;;
+        --adopt)  STOW_FLAGS+=("--adopt");  action_msg="Adopting + stowing" ;;
+        --unstow) STOW_FLAGS=("--no-folding" "--delete"); action_msg="Unstowing" ;;
     esac
 
-    local stow_dir="$DOTS_DIR"
+    stow_one_dir "$DOTS_DIR/common" "common" "$action_msg"
+    stow_one_dir "$DOTS_DIR/$PLATFORM" "$PLATFORM" "$action_msg"
+    # Environment/distro layers on top of the platform packages
+    if [[ "$DISTRO" == "alpine" ]]; then
+        stow_one_dir "$DOTS_DIR/alpine" "alpine" "$action_msg"
+    fi
+    if [[ "$ENV" == "wsl" ]]; then
+        stow_one_dir "$DOTS_DIR/wsl" "wsl" "$action_msg"
+    fi
+}
 
-    stow_one_dir() {
-        local base_dir="$1"
-        local label="$2"
-        [[ -d "$base_dir" ]] || return 0
-        info "$action_label $label configs..."
-        for pkg in "$base_dir"/*/; do
-            [[ -d "$pkg" ]] || continue
-            local pkg_name
-            pkg_name="$(basename "$pkg")"
-            info "  $action_label $pkg_name"
-            if ! stow -d "$base_dir" -t "$HOME" "${stow_flags[@]}" "$pkg_name" 2>&1; then
-                warn "Failed to stow $pkg_name — continuing with remaining packages"
-                FAILURES+=("stow: $pkg_name")
-            fi
-        done
-    }
+# --- Verify ---
 
-    stow_one_dir "$stow_dir/common" "common"
-    stow_one_dir "$stow_dir/$PLATFORM" "$PLATFORM"
+run_verify() {
+    if [[ ! -f "$DOTS_DIR/scripts/verify.sh" ]]; then
+        error "verify.sh not found at $DOTS_DIR/scripts/verify.sh — re-clone the repo."
+    fi
+    if [[ ! -x "$DOTS_DIR/scripts/verify.sh" ]]; then
+        warn "verify.sh is not executable — running it with bash"
+        bash "$DOTS_DIR/scripts/verify.sh"
+        return
+    fi
+    "$DOTS_DIR/scripts/verify.sh"
 }
 
 # --- Main ---
 
 main() {
     trap on_error ERR
-    PLATFORM="$(detect_platform)"
-    info "Detected platform: $PLATFORM"
+    detect_env
+    reattach_tty
+    detect_privilege
 
     case "${1:-}" in
-        -h|--help) usage ;;
-        --restow)
-            install_stow
-            install_just
-            stow_packages --restow
+        -h|--help)
+            usage
             ;;
-        --adopt)
-            install_stow
-            install_just
-            stow_packages --adopt
+        --verify)
+            require_repo
+            run_verify
+            return
             ;;
         --unstow)
-            install_stow
-            install_just
+            require_repo
+            ensure_tool stow || error "GNU Stow is required to unstow but could not be installed."
             stow_packages --unstow
-            info "All symlinks removed."
-            report_failures
-            return
+            SUCCESS_MSG="All symlinks removed."
+            ;;
+        --restow|--adopt)
+            require_repo
+            ensure_tool stow || error "GNU Stow is required but could not be installed."
+            stow_packages "$1"
             ;;
         --force)
             FORCE=true
-            install_age
-            install_stow
-            install_just
+            require_priv
+            install_core
+            preflight_checks
             setup_repo
             decrypt_secrets
             stow_packages
             ;;
-        --verify)
-            "$DOTS_DIR/scripts/verify.sh"
-            return
-            ;;
         "")
-            install_age
-            install_stow
-            install_just
+            require_priv
+            install_core
+            preflight_checks
             setup_repo
             decrypt_secrets
             stow_packages
@@ -268,9 +697,7 @@ main() {
             ;;
     esac
 
-    info "Done! Dotfiles deployed."
-    info "Log out and back in (or source ~/.bashrc) for changes to take effect."
-    report_failures
+    finish
 }
 
 main "$@"
