@@ -62,7 +62,9 @@ individual failures are recorded as non-fatal.
 
 Per-platform behaviour:
 
-- **macos** — installs Homebrew itself when `brew` is missing (official
+- **macos** — exports `HOMEBREW_NO_ANALYTICS=1` and `HOMEBREW_NO_ENV_HINTS=1`
+  (Homebrew must not call home; the macos platform layer sets the same vars
+  for interactive shells), installs Homebrew itself when `brew` is missing (official
   installer, `NONINTERACTIVE=1`, run as the invoking user); installs `bash age
   stow just tmux shellcheck git coreutils`, adds Homebrew's bash to
   `/etc/shells`, and makes it the login shell with `chsh` (both non-fatal if

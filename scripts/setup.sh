@@ -534,6 +534,11 @@ install_core() {
 
     case "$PLATFORM" in
         macos)
+            # Privacy: keep Homebrew from calling home, both for the bootstrap
+            # run itself and for every install it performs. The same exports
+            # live in the macos platform layer for interactive shells.
+            export HOMEBREW_NO_ANALYTICS=1
+            export HOMEBREW_NO_ENV_HINTS=1
             install_homebrew
             info "Installing core packages via Homebrew..."
             pkg_install_set bash age stow just tmux shellcheck git coreutils

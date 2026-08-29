@@ -18,6 +18,11 @@ elif [[ -x /usr/local/bin/brew ]]; then
   eval "$(/usr/local/bin/brew shellenv)"
 fi
 
+# Homebrew privacy: no analytics, no install/update hints; mirrors the env
+# setup.sh exports for its own bootstrap run (scripts/setup.sh).
+export HOMEBREW_NO_ANALYTICS=1
+export HOMEBREW_NO_ENV_HINTS=1
+
 # OrbStack integration (no-op if not installed)
 [[ -s "$HOME/.orbstack/shell/init.bash" ]] && source "$HOME/.orbstack/shell/init.bash"
 
