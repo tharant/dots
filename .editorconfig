@@ -18,6 +18,10 @@ indent_size = 4
 indent_style = space
 indent_size = 4
 
+[common/direnv/.envrc]
+indent_style = space
+indent_size = 4
+
 [common/direnv/.config/direnv/*]
 indent_style = space
 indent_size = 4

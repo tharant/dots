@@ -75,10 +75,11 @@ lint:
   while IFS= read -r -d '' f; do
     files+=("$f")
   done < <(find common macos linux bsd alpine wsl -type f \( -name '.bash*' -o -name '.profile' \) -print0 2>/dev/null)
-  # Extensionless shims and direnv helpers (direnv.toml is not shell — exclude it)
+  # Extensionless shims and the direnv package (.envrc + direnvrc;
+  # direnv.toml is not shell — exclude it)
   while IFS= read -r -d '' f; do
     files+=("$f")
-  done < <(find common/bin/bin common/direnv/.config/direnv -type f ! -name 'direnv.toml' -print0 2>/dev/null)
+  done < <(find common/bin/bin common/direnv -type f ! -name 'direnv.toml' -print0 2>/dev/null)
   if [[ ${#files[@]} -eq 0 ]]; then
     echo "lint: nothing to check."
     exit 0
