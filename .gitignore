@@ -25,4 +25,5 @@ Thumbs.db
 
 # Editor state/backups
 .viminfo
+.netrwhist
 *~

@@ -10,9 +10,12 @@ if ! command -v shellcheck &>/dev/null; then
 fi
 
 # Collect staged bash files (scripts + dotfiles)
+# Vendored third-party code (vim plugins, trueline) is shipped verbatim — skip it.
 mapfile -t files < <(
   git diff --cached --name-only --diff-filter=ACM | while read -r f; do
     case "$f" in
+      common/vim/.vim/bundle/*) continue ;;
+      common/trueline/*)         continue ;;
       *.sh)           echo "$f" ;;
       */.bashrc)      echo "$f" ;;
       */.bash_profile) echo "$f" ;;

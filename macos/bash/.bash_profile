@@ -11,5 +11,8 @@ fi
 # Source interactive config
 [[ -f ~/.bashrc ]] && source ~/.bashrc
 
+# OrbStack integration (no-op if not installed)
+source ~/.orbstack/shell/init.bash 2>/dev/null || :
+
 # BSD ls colors (macOS ls uses LSCOLORS, not LS_COLORS)
 export LSCOLORS=gxfxdxdxcxegedabadbxgx
