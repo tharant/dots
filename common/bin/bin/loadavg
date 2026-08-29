@@ -1,0 +1,11 @@
+#!/bin/sh
+# Single-line load average for the tmux status bar (#($HOME/bin/loadavg)).
+# Portable: /proc/loadavg on Linux (incl. WSL/OrbStack), sysctl elsewhere.
+set -u
+
+if [ -r /proc/loadavg ]; then
+    awk '{print $1, $2, $3}' /proc/loadavg
+else
+    # Darwin/FreeBSD wrap the three values in braces: "{ 1.00 0.50 0.25 }"
+    sysctl -n vm.loadavg | awk '{print $2, $3, $4}'
+fi

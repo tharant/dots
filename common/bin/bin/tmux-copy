@@ -1,0 +1,39 @@
+#!/bin/sh
+# Copy stdin to the best clipboard available. Detection order: pbcopy
+# (macOS) -> clip.exe (WSL2) -> wl-copy (Wayland) -> xclip (X11). With no
+# clipboard binary, emit an OSC 52 escape so capable terminals (over ssh,
+# with tmux set-clipboard external + allow-passthrough) still receive the
+# copy. Binaries' own stdout is discarded, so no double-render.
+set -u
+
+data=$(cat)
+
+if [ -n "$data" ] && command -v pbcopy >/dev/null 2>&1; then
+    if printf '%s' "$data" | pbcopy; then
+        exit 0
+    fi
+fi
+
+# WSL2: clip.exe lives under /mnt/c, but only trust it when we actually
+# are inside WSL (some cross-mounted setups expose /mnt/c too).
+if [ -n "$data" ] && [ -x /mnt/c/Windows/System32/clip.exe ] \
+        && grep -qi microsoft /proc/version 2>/dev/null; then
+    if printf '%s' "$data" | /mnt/c/Windows/System32/clip.exe; then
+        exit 0
+    fi
+fi
+
+if [ -n "$data" ] && command -v wl-copy >/dev/null 2>&1; then
+    if printf '%s' "$data" | wl-copy; then
+        exit 0
+    fi
+fi
+
+if [ -n "$data" ] && command -v xclip >/dev/null 2>&1; then
+    if printf '%s' "$data" | xclip -selection clipboard -in; then
+        exit 0
+    fi
+fi
+
+# Fallback: base64-payload OSC 52 (busybox-compatible base64).
+printf '\033]52;c;%s\a' "$(printf '%s' "$data" | base64 | tr -d '\n')"
