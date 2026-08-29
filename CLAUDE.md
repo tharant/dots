@@ -14,7 +14,7 @@ Central dotfiles repository for bash across macOS, Debian flavors, Alpine, WSL2,
 dots/
 ├── common/          # Shared configs across all platforms (GNU Stow packages)
 │   ├── bash/        # .bashrc (with .bashrc.platform.d hook), aliases, functions, ...
-│   ├── bin/         # ~/bin shims: loadavg, tmux-copy (uname-branching, one file for all)
+│   ├── bin/         # ~/bin shims: loadavg, tmux-copy (portable, one file for all)
 │   ├── git/         # .gitconfig, .gitignore_global
 │   ├── nvim/        # .config/nvim/init.lua (clipboard-guarded)
 │   ├── ssh/         # ssh config (portable; UseKeychain behind IgnoreUnknown)

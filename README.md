@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/tharant/dots/main/scripts/setup.sh 
 ./scripts/setup.sh
 ```
 
-This installs all dependencies (git, bash 5, age, GNU Stow, just, tmux, core tools), clones the repo to `~/.dots`, decrypts secrets (age key if present, else passphrase prompt — prompts attach to the real TTY even under `curl | bash`), and symlinks configs into `$HOME`.
+This installs all dependencies (git, bash 5, age, GNU Stow, just, tmux, shellcheck, core tools), clones the repo to `~/.dots`, decrypts secrets (age key if present, else passphrase prompt — prompts attach to the real TTY even under `curl | bash`), and symlinks configs into `$HOME`.
 
 **Alpine first step** (busybox-only base — the one-liner needs bash, git, and curl first):
 
@@ -42,8 +42,9 @@ Detection: `uname -s` (platform), `/etc/os-release` (distro), `/proc/version` + 
 dots/
 ├── common/            # Cross-platform configs (Stow packages)
 │   ├── bash/          # .bashrc, .bash_aliases, .bash_functions, ...
-│   ├── bin/           # ~/bin shims: loadavg, tmux-copy (uname-branching)
+│   ├── bin/           # ~/bin shims: loadavg, tmux-copy (capability-detecting)
 │   ├── git/           # .gitconfig, .gitignore_global
+│   ├── nvim/          # .config/nvim/init.lua (coc.nvim, clipboard-guarded)
 │   ├── ssh/           # SSH config (public parts)
 │   ├── tmux/          # .tmux.conf (single, identical on every platform)
 │   ├── trueline/      # .local/trueline/ (patched trueline.sh + .trueline.conf)
@@ -74,6 +75,8 @@ Platform overrides must **not** be conditionals in `common/`. Instead, each plat
 ./scripts/decrypt.sh                          # Decrypt all secrets
 ./scripts/verify.sh                           # Check symlink + permissions health
 ```
+
+The same operations are available through `just` (`just setup`, `just restow`, `just verify`, `just encrypt <file>`, `just lint`, …) — run `just` for the full list.
 
 ## Secrets
 
