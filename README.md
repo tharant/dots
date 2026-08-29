@@ -29,7 +29,7 @@ dots/
 ├── macos/        # macOS-specific overrides
 ├── linux/        # Linux-specific overrides
 ├── bsd/          # BSD-specific overrides
-├── secrets/      # Encrypted files (*.age), hybrid-encrypted
+├── secrets/      # Encrypted files (dual artifacts: *.age + *.phrase.age)
 └── scripts/      # setup.sh, encrypt.sh, decrypt.sh
 ```
 
@@ -48,7 +48,7 @@ Each subdirectory inside `common/` and the platform dirs is a Stow package. File
 
 ## Secrets
 
-Secrets are hybrid-encrypted with both a passphrase and an age recipient key (`age -p -R recipients.txt`). Either can decrypt:
+Secrets are stored as two age artifacts per secret — `X.age` (age recipient key) and `X.phrase.age` (passphrase fallback) — since no age CLI can combine both in one file. Either can decrypt:
 
 - **Fresh machine (no age key):** passphrase prompt
 - **Established machine:** age identity at `~/.age/keys.txt` — no prompts

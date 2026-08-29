@@ -25,14 +25,14 @@ dots/
 │   └── bash/        # .bash_profile
 ├── bsd/             # BSD-specific overrides (Stow packages)
 │   └── bash/        # .bash_profile
-├── secrets/         # Encrypted files (*.age only, hybrid encrypted)
+├── secrets/         # Encrypted files (dual artifacts *.age + *.phrase.age)
 │   ├── recipients.txt  # age public key(s) for encryption
 │   ├── ssh/         # Encrypted SSH private keys
 │   └── tokens/      # Encrypted API tokens, credentials
 ├── scripts/
 │   ├── setup.sh     # Bootstrap script (curl-able, installs deps, decrypts, stows)
-│   ├── encrypt.sh   # Encrypt a file (hybrid: passphrase + age key)
-│   └── decrypt.sh   # Decrypt secrets (tries age key, falls back to passphrase)
+│   ├── encrypt.sh   # Encrypt a file (age key + passphrase copies)
+│   └── decrypt.sh   # Decrypt secrets (age key if present, else passphrase)
 ├── docs/            # Reference documentation
 │   ├── bash-startup-order.md  # Bash startup file loading order
 │   └── stow-adopt-workflow.md # How to adopt existing configs with stow --adopt
@@ -47,12 +47,17 @@ Each subdirectory inside `common/` and platform dirs is a Stow package. Files ar
 
 ### Secrets: Hybrid Encryption with age
 
-Secrets are encrypted with **both** a passphrase and an age recipient key using `age -p -R recipients.txt`. Either method can decrypt:
+Secrets are stored as **two age artifacts per secret**, each encrypting the same plaintext:
 
+- `X.age` — encrypted to the recipients in `secrets/recipients.txt`
+- `X.phrase.age` — encrypted with a passphrase
+
+**Why two files:** the age file format supports combining recipient stanzas with a passphrase stanza, but no CLI (age or rage) can produce such a file — `age -p -R` is rejected. Dual artifacts replicate the "either unlocks it" property with plain age:
+
+- **Established machine:** age identity at `~/.age/keys.txt` — no prompts
 - **Fresh machine (no keys):** passphrase prompt — enables `curl | bash` bootstrap
-- **Established machine:** age identity at `~/.age/keys.txt` — no prompts needed
 
-The decrypt script (`scripts/decrypt.sh`) auto-detects which method to use. Target locations are mapped by subdirectory: `secrets/ssh/*` → `~/.ssh/`, `secrets/tokens/*` → `~/.config/tokens/`.
+The decrypt script (`scripts/decrypt.sh`) tries the age identity first and falls back to the passphrase copy. Legacy single-artifact secrets (passphrase-only `X.age`) still decrypt. Target locations are mapped by subdirectory: `secrets/ssh/*` → `~/.ssh/`, `secrets/tokens/*` → `~/.config/tokens/`.
 
 ### New Machine Bootstrap
 
