@@ -104,7 +104,7 @@ TMUX_POWERLINE_RIGHT_STATUS_SEGMENTS=(
 	"tmux_mem_cpu_load $TPL_PILL_HI $TPL_GREEN"
 	#"weather $TPL_PILL $TPL_ACCENT"
 	"lan_ip $TPL_PILL_HI $TPL_FG_DIM"
-	"wan_ip $TPL_PILL_HI $TPL_FG_DIM"
+	#"wan_ip $TPL_PILL_HI $TPL_FG_DIM"
 	#"vcs_branch $TPL_PILL $TPL_PURPLE"
 	"date_day $TPL_PILL_HI $TPL_YELLOW"
 	"date $TPL_PILL $TPL_FG"
