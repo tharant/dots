@@ -48,6 +48,17 @@ steps never run in those modes. `--restow`, `--adopt` and `--unstow` do no
 first step that needs root (installing `stow` when it is missing) fails,
 reported by the ERR trap. Homebrew is never run with the privilege prefix.
 
+**Output policy.** The terminal carries only the `==>` status lines.
+Package-manager (`apt-get`, `brew`, `dnf`, `pacman`, `apk`, `pkg` — including
+the one-time `apt-get update`), installer (Homebrew, uv, sdkman),
+locale-generation and git (clone/pull) output is captured in a per-run audit
+log at `~/.local/state/dots/setup-<timestamp>.log`, whose path is announced
+at the start of every run. A captured step that fails prints the last 20
+lines of the log so the error itself stays on the terminal, and the
+end-of-run failure summary names the log. Stow and decrypt output is not
+captured: stow conflicts are immediately actionable, and the decrypt prompts
+need the terminal.
+
 **Detection.** `uname -s` maps Darwin→`macos`, Linux→`linux`, and anything
 matching `*BSD`→`bsd`; anything else is fatal ("Unsupported platform"). On
 Linux the distro ID comes from `/etc/os-release`. WSL is detected from
@@ -208,6 +219,8 @@ options.` and exits 1. A run can print plenty of WARNING lines and still exit
 ## Files
 
 - `~/.dots` — default repository location.
+- `~/.local/state/dots/setup-<timestamp>.log` — per-run audit log holding
+  the captured package-manager/installer/git output (kept across runs).
 - `~/.dots-backup-<timestamp>/` — pre-existing `$HOME` files moved aside to
   unblock stowing (full, `--force` and `--restow` runs); restore by hand if
   needed.
