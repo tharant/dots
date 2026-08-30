@@ -794,6 +794,65 @@ post_install_checks() {
     fi
 }
 
+install_tmux_mem_cpu_load() {
+    # Memory/CPU/load bar binary for the tmux-powerline segment. Packaged for
+    # Homebrew but not for Debian, so Linux apt distros build it from the
+    # pinned upstream release. Non-fatal throughout: the segment silently
+    # drops out of the bar when the binary is missing (upstream probes it
+    # before running), the rest of the statusline is unaffected.
+    if command_exists tmux-mem-cpu-load; then
+        info "tmux-mem-cpu-load already installed"
+        return 0
+    fi
+
+    local version="v3.8.3" tmp
+
+    if [[ "$PKG_MGR" == "brew" ]]; then
+        # Homebrew builds and installs into the prefix. Kept out of the core
+        # batch so this function is the single documented seam for the binary.
+        pkg_install tmux-mem-cpu-load || FAILURES+=("install: tmux-mem-cpu-load")
+        return 0
+    fi
+
+    if [[ "$PLATFORM" != "linux" ]]; then
+        warn "$PLATFORM: no tmux-mem-cpu-load package for $PKG_MGR — the tmux"
+        warn "mem/cpu segment is skipped (the rest of the bar is unaffected)"
+        FAILURES+=("install: tmux-mem-cpu-load")
+        return 0
+    fi
+
+    info "Building tmux-mem-cpu-load $version from source (not packaged on apt)..."
+    if ! pkg_install_set build-essential cmake; then
+        warn "Cannot build tmux-mem-cpu-load without a C++ toolchain and cmake"
+        FAILURES+=("install: tmux-mem-cpu-load (toolchain)")
+        return 0
+    fi
+    tmp="$(mktemp -d)"
+    if ! download "https://github.com/thewtex/tmux-mem-cpu-load/archive/refs/tags/${version}.tar.gz" "$tmp/src.tar.gz"; then
+        rm -rf "$tmp"
+        FAILURES+=("install: tmux-mem-cpu-load (download)")
+        return 0
+    fi
+    # The tag tarball unpacks to tmux-mem-cpu-load-<version-without-v>.
+    if ! tar -xzf "$tmp/src.tar.gz" -C "$tmp"; then
+        warn "Could not extract the tmux-mem-cpu-load source tarball"
+        rm -rf "$tmp"
+        FAILURES+=("install: tmux-mem-cpu-load (extract)")
+        return 0
+    fi
+    if (cd "$tmp/tmux-mem-cpu-load-${version#v}" &&
+            cmake . -DCMAKE_BUILD_TYPE=Release >/dev/null &&
+            make -C . >/dev/null); then
+        run_priv install -m 0755 "$tmp/tmux-mem-cpu-load-${version#v}/tmux-mem-cpu-load" /usr/local/bin/tmux-mem-cpu-load
+        rm -rf "$tmp"
+        info "Installed tmux-mem-cpu-load to /usr/local/bin"
+    else
+        warn "tmux-mem-cpu-load build failed — the tmux mem/cpu segment is skipped"
+        rm -rf "$tmp"
+        FAILURES+=("install: tmux-mem-cpu-load (build)")
+    fi
+}
+
 install_core() {
     detect_pkg_mgr
 
@@ -840,6 +899,7 @@ install_core() {
             ;;
     esac
 
+    install_tmux_mem_cpu_load
     post_install_checks
     install_runtimes
 }

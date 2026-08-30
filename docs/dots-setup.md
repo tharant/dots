@@ -105,7 +105,13 @@ Per-platform behaviour:
 - **FreeBSD** — `git age stow just tmux shellcheck bash coreutils direnv curl
   ca_root_nss` via `pkg`.
 
-Post-install: `git curl just tmux shellcheck` are each verified (a missing
+Post-install: `tmux-mem-cpu-load` is installed for the tmux-powerline
+mem/cpu segment — the Homebrew formula on macOS, built from source at the
+pinned upstream release (`v3.8.3`) on apt distros (installing the C++
+toolchain and cmake for the build; `make install` into `/usr/local/bin`),
+and skipped with a recorded non-fatal failure elsewhere — on failure the
+segment simply drops out of the status bar. Then `git curl just tmux
+shellcheck` are each verified (a missing
 tool is a recorded non-fatal failure), a missing `stow` is **fatal**, a
 missing `age` falls back to the static release `v1.3.1` installed to
 `~/.local/bin` (mode 0755), warning if that directory is not already on

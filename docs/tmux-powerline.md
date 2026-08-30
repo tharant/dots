@@ -24,6 +24,7 @@ tmux-powerline — plugin-managed tmux status bar for the dots repo
 `.tmux.conf` does **not** use tpm. Its final lines are:
 
 ```
+set-environment -g PATH "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 if-shell -F "test -x $HOME/.config/tmux-powerline/tmux-powerline/main.tmux" \
     "run-shell 'bash $HOME/.config/tmux-powerline/tmux-powerline/main.tmux'"
 ```
@@ -33,6 +34,15 @@ if-shell -F "test -x $HOME/.config/tmux-powerline/tmux-powerline/main.tmux" \
 - `run-shell` commands queued from a config file are dispatched after the
   file is parsed, so the plugin's settings land after the fallback's options
   and before the first draw.
+- The `set-environment` line pins a standard cross-platform `PATH` into the
+  server's global environment. A server started by `ssh host -t tmux at`
+  inherits sshd's non-interactive `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`):
+  `tmux set-option` inside `main.tmux` then fails with "command not found",
+  errexit aborts the loader, and the fallback bar sticks — while a server
+  started from an interactive login (brew shellenv on `PATH`) gets the
+  powerline bar. With the pinned `PATH`, every `run-shell`/`#(…)` job is
+  self-sufficient no matter how the server booted; interactive panes re-derive
+  `PATH` in `.bashrc` (brew shellenv, `~/bin`, …) regardless.
 
 The plugin's `main.tmux` overrides `status-left/right`, both lengths,
 `status`, `status-interval`, `status-justify`, `status-style`,
@@ -72,12 +82,17 @@ platform.
   the `battery` segment where one exists — otherwise the upstream segment
   prints its ADAPTER glyph on battery-less desktops;
 - sets the left segments (`tmux_session_info`, `hostname`), the right
-  segments (`load`, battery?, `weather`, `lan_ip`, `wan_ip`, `vcs_branch`,
-  `date_day`, `date`, `time`), and the window pill arrays.
+  segments (`tmux_mem_cpu_load`, battery?, `weather`, `lan_ip`, `wan_ip`,
+  `vcs_branch`, `date_day`, `date`, `time`), and the window pill arrays.
 
 Segment knobs live in `config.sh` (hostname/session formats, date/time
-formats, weather provider, VCS branch truncation, …). The full knob list is
-in the plugin's `segments/*.sh` at the pin.
+formats, weather provider, VCS branch truncation, `tmux-mem-cpu-load`
+arguments, …). The full knob list is in the plugin's `segments/*.sh` at the
+pin. `tmux_mem_cpu_load` runs [tmux-mem-cpu-load](https://github.com/thewtex/tmux-mem-cpu-load)
+with `--colors` (the 256-colour graded CPU bar) and replaces the old `load`
+pill — the binary already reports the same three load averages; when the
+binary is missing (e.g. a platform setup.sh could not build it for) the
+segment silently drops out of the bar.
 
 ## Dependencies
 

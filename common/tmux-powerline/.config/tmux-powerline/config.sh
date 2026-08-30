@@ -35,6 +35,11 @@ export TMUX_POWERLINE_SEG_HOSTNAME_FORMAT="short"
 # Session/window/pane in the leftmost pill.
 export TMUX_POWERLINE_SEG_TMUX_SESSION_INFO_FORMAT="#S:#I.#P"
 
+# Memory/CPU/load via tmux-mem-cpu-load (installed by setup.sh). --colors gets
+# the 256-colour graded CPU bar; without the binary installed the segment
+# silently drops out of the bar (upstream segment returns empty).
+export TMUX_POWERLINE_SEG_TMUX_MEM_CPU_LOAD_ARGS="--colors"
+
 # Matches the formats the old .tmux.conf status bar used (12h clock, US date).
 export TMUX_POWERLINE_SEG_DATE_FORMAT="%m/%d/%y"
 export TMUX_POWERLINE_SEG_TIME_FORMAT="%I:%M %p"

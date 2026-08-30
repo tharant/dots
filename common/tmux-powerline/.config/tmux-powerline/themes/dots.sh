@@ -95,15 +95,17 @@ elif [ "$(uname -s)" = "FreeBSD" ] && [ -n "$(sysctl -n hw.acpi.battery.life 2>/
 	_tpl_battery="battery $TPL_PILL_HI $TPL_ORANGE"
 fi
 
-# Right: load, battery?, weather, IPs, vcs branch, then the date cluster
-# capped by an accent-colored time pill. Alternating pill/hi backgrounds keep
-# neighboring segments readable against the bar.
+# Right: mem/cpu/load (tmux-mem-cpu-load, replaces the old load pill — the
+# binary already reports the same three load averages), battery?, weather, IPs,
+# vcs branch, then the date cluster capped by an accent-colored time pill.
+# Alternating pill/hi backgrounds keep neighboring segments readable against
+# the bar.
 TMUX_POWERLINE_RIGHT_STATUS_SEGMENTS=(
-	"load $TPL_PILL_HI $TPL_GREEN"
-	"weather $TPL_PILL $TPL_ACCENT"
+	"tmux_mem_cpu_load $TPL_PILL_HI $TPL_GREEN"
+	#"weather $TPL_PILL $TPL_ACCENT"
 	"lan_ip $TPL_PILL_HI $TPL_FG_DIM"
 	"wan_ip $TPL_PILL_HI $TPL_FG_DIM"
-	"vcs_branch $TPL_PILL $TPL_PURPLE"
+	#"vcs_branch $TPL_PILL $TPL_PURPLE"
 	"date_day $TPL_PILL_HI $TPL_YELLOW"
 	"date $TPL_PILL $TPL_FG"
 	"time $TPL_ACCENT $TPL_BG"
