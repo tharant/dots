@@ -84,8 +84,11 @@ Per-platform behaviour:
   creates with `mkdir -p` if missing) with `node`, `npm`, `npx` symlinked into
   `/usr/local/bin`. Then: `just` from apt when available,
   otherwise the upstream musl binary (`1.58.0`) into `/usr/local/bin`; and
-  `en_US.UTF-8` generation via `locale-gen` (skipped with a recorded failure
-  if `locale-gen` or `/etc/locale.gen` is missing).
+  `en_US.UTF-8` generation via `locale-gen` — resolved through `PATH` with
+  `/usr/sbin/locale-gen` as an absolute-path fallback, because `/usr/sbin` is
+  not always on `PATH` (OrbStack syncs the Mac's `PATH` into its machines;
+  non-login shells) even when the `locales` package is installed (skipped with
+  a recorded failure if neither is found, or if `/etc/locale.gen` is missing).
 - **Other Linux** (dnf/pacman/pkg) — `git age stow just tmux shellcheck bash
   coreutils direnv curl ca-certificates`.
 - **FreeBSD** — `git age stow just tmux shellcheck bash coreutils direnv curl
@@ -129,6 +132,16 @@ then the `alpine/` layer on Alpine and the `wsl/` layer under WSL. Layers
 whose directory does not exist are skipped silently. A package that fails to
 stow is recorded as a failure and stowing continues with the remaining
 packages.
+
+Before each package is stowed (in the full, `--force` and `--restow` runs,
+but not `--adopt` or `--unstow`), any plain regular file sitting at one of
+the package's target paths is moved aside into
+`~/.dots-backup-<timestamp>/`, preserving its path relative to `$HOME` — so a
+fresh distro's `/etc/skel` defaults (Debian seeds `~/.bashrc` and
+`~/.bash_logout`) no longer abort the whole package. Symlinks and directories
+are never moved; those remain conflicts stow is right to refuse. Nothing is
+deleted — each move is reported as it happens and the backup directory is
+named in a summary line when anything was backed up.
 
 ## Options
 
@@ -195,6 +208,9 @@ options.` and exits 1. A run can print plenty of WARNING lines and still exit
 ## Files
 
 - `~/.dots` — default repository location.
+- `~/.dots-backup-<timestamp>/` — pre-existing `$HOME` files moved aside to
+  unblock stowing (full, `--force` and `--restow` runs); restore by hand if
+  needed.
 - `/etc/os-release` — Linux distro ID.
 - `/proc/version` — WSL detection.
 - `/etc/apk/repositories` — read, and extended with the community repo, on Alpine.
