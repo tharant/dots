@@ -7,10 +7,18 @@ filetype off                  " re-enabled by plug#end() below
 " plugins are installed automatically on the first startup; manage them
 " manually with :PlugInstall / :PlugUpdate / :PlugClean.
 " ----------------------------------------------------------------------
+" coc.nvim needs node (>= 22) at runtime; without it the plugin aborts with
+" an error prompt on every startup. Load it — and bind its mappings — only
+" when node exists (see ~/.vim/MYDOTS.md "Requirements"). node comes from
+" fnm via the runtimes CLI (docs/direnv-runtimes.md); vim finds it on PATH.
+let s:coc_ok = executable('node')
+
 call plug#begin('~/.vim/plugged')
 Plug 'morhetz/gruvbox'                          " dark colorscheme (DotTheme gruvbox)
 Plug 'tomasiser/vim-code-dark'                    " VS Code Dark+ colorscheme (DotTheme codedark)
-Plug 'neoclide/coc.nvim', {'branch': 'release'} " LSP completion; needs node >= 22 (see MYDOTS.md)
+if s:coc_ok
+  Plug 'neoclide/coc.nvim', {'branch': 'release'} " LSP completion (needs node >= 22)
+endif
 Plug 'preservim/nerdtree'                       " file sidebar (F2)
 Plug 'vim-airline/vim-airline'                  " statusline
 Plug 'vim-airline/vim-airline-themes'           " airline themes (DotTheme picks one)
@@ -88,7 +96,9 @@ function! s:LoadTheme() abort
   return has_key(s:themes, name) ? name : 'gruvbox'
 endfunction
 
-function! s:SetTheme(name) abort
+" Second (optional) argument: quiet — apply without a message. Startup uses
+" it so opening vim doesn't echo anything; interactive :DotTheme confirms.
+function! s:SetTheme(name, ...) abort
   if !has_key(s:themes, a:name)
     echohl WarningMsg
     echomsg 'Unknown theme: ' . a:name . ' (available: ' . join(sort(keys(s:themes)), ', ') . ')'
@@ -102,7 +112,9 @@ function! s:SetTheme(name) abort
   let g:gruvbox_italic = 1
   execute 'colorscheme' t.colorscheme
   call writefile([a:name], s:theme_file)
-  echomsg 'Theme set to ' . a:name . ' (persisted to ' . s:theme_file . ')'
+  if !(a:0 && a:1)
+    echomsg 'Theme set to ' . a:name . ' (persisted to ' . s:theme_file . ')'
+  endif
 endfunction
 
 command! -nargs=1 -complete=customlist,s:ThemeComplete DotTheme call s:SetTheme(<q-args>)
@@ -114,7 +126,7 @@ endfunction
 nnoremap <silent> <leader>tg :DotTheme gruvbox<CR>
 nnoremap <silent> <leader>tc :DotTheme codedark<CR>
 
-call s:SetTheme(s:LoadTheme())
+call s:SetTheme(s:LoadTheme(), 1)
 
 " Allow saving of files as sudo when I forgot to start vim using sudo.
 cmap w!! %!sudo tee > /dev/null %
@@ -142,6 +154,12 @@ autocmd StdinReadPre * let s:std_in=1
 map <F2> :NERDTreeToggle<CR>
 
 " coc.nvim configuration (replaces neocomplete)
+" Everything coc-related — the plugin above, these mappings, K, the
+" CursorHold highlight — is gated on s:coc_ok: the coc#...() functions and
+" <Plug>(coc-...) maps only exist once the plugin loads, and referencing
+" them from a mapping without coc produces errors on every keypress.
+if s:coc_ok
+
 " Extensions are installed automatically on first startup.
 let g:coc_global_extensions = ['coc-json', 'coc-tsserver', 'coc-pyright']
 
@@ -188,6 +206,8 @@ endfunction
 autocmd FileType css setlocal omnifunc=csscomplete#CompleteCSS
 autocmd FileType html,markdown setlocal omnifunc=htmlcomplete#CompleteTags
 autocmd FileType xml setlocal omnifunc=xmlcomplete#CompleteTags
+
+endif " s:coc_ok
 
 " <leader>y sends the last-yanked text to the system clipboard. Only bound
 " when a clipboard helper exists (was: forwarding to Clipper on port 8377,

@@ -8,7 +8,11 @@ explains what's active, how it works, and how to use it.
 
 - **coc.nvim** needs `node` >= 22.15 on your PATH, plus Neovim >= 0.8 or Vim
   >= 9.0.0438. On old distros (e.g. Debian bookworm ships Vim 9.0 and Node 18)
-  use Neovim from upstream so coc still works — or skip coc entirely.
+  use Neovim from upstream so coc still works — or skip coc entirely. When
+  `node` is missing, `.vimrc` detects it and skips coc (plugin, mappings and
+  all) so startup stays clean; installing node and restarting vim re-enables
+  it. node comes from fnm via the `runtimes` CLI (see
+  [docs/direnv-runtimes.md](../../docs/direnv-runtimes.md) in the repo).
 - A clipboard helper (`pbcopy`, `wl-copy`, `xclip`, `win32yank.exe` or
   `clip.exe`) for `\y` and for the `clipboard=unnamedplus` shortcut. Without
   one vim just keeps its internal clipboard — no errors, no maps bound.
@@ -57,7 +61,8 @@ you don't get with the plugin alone:
 Every switch applies the colorscheme **and** the matching
 [vim-airline](#active-plugins-vimplugged) statusline theme, and echoes a
 confirmation. An unknown name (e.g. `:DotTheme bogus`) prints the available
-options and leaves the theme untouched.
+options and leaves the theme untouched. Startup re-applies the saved theme
+silently — no message, no keypress needed.
 
 ## Theme switching — how it works
 
@@ -75,14 +80,16 @@ Two colorschemes are installed:
 - The block in `~/.vimrc` right after the true-color setup defines `s:themes`
   (theme → colorscheme/airline names), `s:LoadTheme()` (reads the restored name),
   `s:SetTheme()` (validates, sets `g:airline_theme`, enables
-  `g:gruvbox_italic`, runs `:colorscheme`, persists), the `:DotTheme` command
+  `g:gruvbox_italic`, runs `:colorscheme`, persists; an optional second
+  argument silences the confirmation), the `:DotTheme` command
   with completion, the `\tg` / `\tc` maps, and the startup `call
-  s:SetTheme(s:LoadTheme())`.
+  s:SetTheme(s:LoadTheme(), 1)` — the `1` is the quiet flag, so opening vim
+  doesn't echo anything.
 - `g:airline_theme` is deliberately never set anywhere else in `~/.vimrc` —
   setting it after the switcher (as an old `molokai` line did) desyncs the
   statusline from the colorscheme.
 - To revert without the switcher, delete `~/.vim/.theme` and replace
-  `call s:SetTheme(s:LoadTheme())` with e.g. `colorscheme xoria256`
+  `call s:SetTheme(s:LoadTheme(), 1)` with e.g. `colorscheme xoria256`
   (still present in `~/.vim/colors/`).
 
 ## Plugin manager: vim-plug

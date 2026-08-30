@@ -122,7 +122,7 @@ Each secret is stored as two age artifacts encrypting the same plaintext — `X.
 ## Requirements for interactive use
 
 - **bash ≥ 4.3** (installed by setup.sh; macOS stock bash 3.2 is detected and skipped for the trueline prompt, not broken)
-- **Node ≥ 22.15 + Neovim ≥ 0.8 or Vim ≥ 9.0.0438** for coc.nvim; see `common/vim/.vim/MYDOTS.md` (on Debian bookworm, install nvim from upstream)
+- **Node ≥ 22.15 + Neovim ≥ 0.8 or Vim ≥ 9.0.0438** for coc.nvim; see `common/vim/.vim/MYDOTS.md` (on Debian bookworm, install nvim from upstream). Without node, vim skips coc and starts clean — node arrives via `runtimes install node 22` (fnm)
 - A **Nerd Font** on the *terminal client* machine (for the tmux status and trueline glyphs); headless/SSH hosts need nothing. The tmux-powerline config declares it via `TMUX_POWERLINE_PATCHED_FONT_IN_USE=true`.
 - `gh` (`gh auth login`) for the git credential helper on any target
 
