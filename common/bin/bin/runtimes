@@ -236,6 +236,32 @@ install_one() {
     esac
 }
 
+store_root() {
+    # Root a backend's install paths must sit under — mirrors the direnvrc
+    # lock validation (a lock path outside its store is ignored there, so
+    # writing one just wedges the project in a re-ensure loop).
+    case "$1" in
+        python) printf '%s\n' "$UV_PYTHON_DIR" ;;
+        node)   printf '%s\n' "$FNM_DIR/node-versions" ;;
+        java)   printf '%s\n' "$SDKMAN_DIR/candidates" ;;
+        *)      return 1 ;;
+    esac
+}
+
+path_in_store() {
+    # path_in_store <name> <path> — 0 when <path> is inside the store root
+    # and does not escape it with ..
+    local root
+    root=$(store_root "$1") || return 1
+    case "$2" in
+        "$root"/*)
+            case "$2" in *"/.."*) return 1 ;; esac
+            return 0
+            ;;
+    esac
+    return 1
+}
+
 # --- Backends ---
 
 backend_python() {
@@ -245,7 +271,13 @@ curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh)"
     # uv python install is idempotent and atomic on its own side (staging +
     # rename inside UV_PYTHON_INSTALL_DIR).
     UV_NO_PROJECT=1 uv python install "$spec" >&2
-    found=$(UV_NO_PROJECT=1 uv python find "$spec" 2>/dev/null) \
+    # `uv python find` prefers an active venv (VIRTUAL_ENV) and a .venv in
+    # the cwd — the detached ensure worker runs in the project dir, where
+    # .venv exists, so a plain find resolves the project venv instead of the
+    # store interpreter and the lock ends up pointing outside the store.
+    # Resolve from / (never has a .venv) with the venv vars scrubbed.
+    found=$(cd / && env -u VIRTUAL_ENV -u UV_PROJECT_ENVIRONMENT \
+        UV_NO_PROJECT=1 uv python find "$spec" 2>/dev/null) \
         || die "uv could not resolve python $spec after install"
     dir=$(dirname "$(dirname "$found")")
     RESOLVED=$("$found" -c 'import platform; print(platform.python_version())' 2>/dev/null) \
@@ -432,6 +464,14 @@ cmd_ensure_dir() {
         name=${NAME[$i]}; spec=${SPEC[$i]}
         info "runtimes: installing $name $spec"
         install_one "$name" "$spec"
+        # A backend result outside its store would be ignored by every
+        # evaluation (direnvrc validation) yet rewritten by every ensure —
+        # skip it instead, so the failure is visible in the log and the
+        # lock is never corrupted.
+        if [ -n "$RESOLVED" ] && [ -n "$RPATH" ] && ! path_in_store "$name" "$RPATH"; then
+            warn "runtimes: $name $spec resolved to $RPATH, outside its store — skipping its lock entry"
+            RESOLVED=""; RPATH=""
+        fi
         if [ -n "$RESOLVED" ] && [ -n "$RPATH" ]; then
             R_NAME[R_COUNT]=$name
             R_SPEC[R_COUNT]=$spec
