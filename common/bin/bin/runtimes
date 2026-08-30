@@ -300,8 +300,13 @@ backend_java() {
                 *)      platform=linux ;;
             esac
             url="https://api.sdkman.io/2/candidates/java/${platform}/versions/list?current=&installed="
-            resolved=$(fetch "$url" | grep -E "^${spec}\.[0-9]" \
-                | grep -E -- "-tem$" | latest_version) || true
+            # The API answers with a human-readable table
+            # (Vendor | Use | Version | Identifier), not bare ids: keep the
+            # temurin rows, take the Identifier (last field of the row), then
+            # match the major on that id. The trailing "$ sdk install ..."
+            # hint line also ends in -tem but never matches a major grep.
+            resolved=$(fetch "$url" | grep -E -- "-tem$" | awk '{print $NF}' \
+                | grep -E "^${spec}\.[0-9]" | latest_version) || true
             [ -n "$resolved" ] || die "no temurin java ${spec}.x.y found via sdkman"
             ;;
     esac
