@@ -48,6 +48,8 @@ dots/
 │   ├── nvim/          # .config/nvim/init.lua (coc.nvim, clipboard-guarded)
 │   ├── ssh/           # SSH config (public parts)
 │   ├── tmux/          # .tmux.conf (single, identical on every platform)
+│   ├── tmux-powerline/ # .config/tmux-powerline/: config.sh + themes/dots.sh
+│   │                  #   (plugin itself cloned by setup.sh, pinned)
 │   ├── trueline/      # .local/trueline/ (patched trueline.sh + .trueline.conf)
 │   └── vim/           # .vimrc, .vim/ (vim-plug; plug.vim vendored)
 ├── macos/             # macOS overrides → .bashrc.platform.d/macos.sh
@@ -121,7 +123,7 @@ Each secret is stored as two age artifacts encrypting the same plaintext — `X.
 
 - **bash ≥ 4.3** (installed by setup.sh; macOS stock bash 3.2 is detected and skipped for the trueline prompt, not broken)
 - **Node ≥ 22.15 + Neovim ≥ 0.8 or Vim ≥ 9.0.0438** for coc.nvim; see `common/vim/.vim/MYDOTS.md` (on Debian bookworm, install nvim from upstream)
-- A **Nerd Font** on the *terminal client* machine (for the tmux status and trueline glyphs); headless/SSH hosts need nothing
+- A **Nerd Font** on the *terminal client* machine (for the tmux status and trueline glyphs); headless/SSH hosts need nothing. The tmux-powerline config declares it via `TMUX_POWERLINE_PATCHED_FONT_IN_USE=true`.
 - `gh` (`gh auth login`) for the git credential helper on any target
 
 ## Adding Platform-Specific Configs

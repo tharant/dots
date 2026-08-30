@@ -7,12 +7,18 @@ loadavg \- one-line load average for the tmux status bar
 Prints the 1, 5 and 15-minute load averages on a single line,
 space-separated, with no decoration. It exists for
 .BR tmux (1)'s
-status bar: the status segment in
+status bar: the inline
+.I fallback
+status bar in
 .I .tmux.conf
 invokes it as
 .I "#($HOME/bin/loadavg)"
 and supplies all color, spacing and labels itself, while this script
-supplies only the three numbers.
+supplies only the three numbers. The primary status bar is the
+tmux-powerline plugin, whose built-in
+.I load
+segment renders the load average when the plugin is installed; the
+fallback bar (and this shim) takes over only when the clone is missing.
 .PP
 It takes no options and reads no input; a status-line refresh simply runs it
 once per interval.

@@ -731,7 +731,7 @@ install_runtimes() {
 post_install_checks() {
     # Never fail silently: verify the tools the rest of the run depends on
     local tool
-    for tool in git curl just tmux shellcheck; do
+    for tool in git curl just tmux shellcheck jq; do
         if ! command_exists "$tool"; then
             warn "Expected tool '$tool' is still missing after install"
             FAILURES+=("missing: $tool")
@@ -763,7 +763,8 @@ install_core() {
             export HOMEBREW_NO_ENV_HINTS=1
             install_homebrew
             info "Installing core packages via Homebrew..."
-            pkg_install_set bash age stow just tmux shellcheck git coreutils direnv
+            pkg_install_set bash age stow just tmux shellcheck git coreutils \
+                direnv jq bc
             macos_default_shell
             ;;
         linux)
@@ -771,7 +772,8 @@ install_core() {
                 alpine_prepare
                 info "Installing core packages via apk..."
                 local alpine_pkgs=(bash coreutils findutils util-linux git age stow just tmux
-                    shellcheck direnv shadow bash-completion ncurses-terminfo curl ca-certificates)
+                    shellcheck direnv shadow bash-completion ncurses-terminfo curl \
+                    ca-certificates jq bc)
                 # Keep doas-only systems doas-only
                 if ! command_exists sudo && ! command_exists doas; then
                     alpine_pkgs+=(sudo)
@@ -780,16 +782,18 @@ install_core() {
             elif [[ "$PKG_MGR" == "apt-get" ]]; then
                 info "Installing core packages via apt..."
                 pkg_install_set git age stow tmux shellcheck bash coreutils less \
-                    locales ca-certificates curl wl-clipboard xz-utils direnv
+                    locales ca-certificates curl wl-clipboard xz-utils direnv jq bc
                 install_debian_extra
             else
                 info "Installing core packages..."
-                pkg_install_set git age stow just tmux shellcheck bash coreutils direnv curl ca-certificates
+                pkg_install_set git age stow just tmux shellcheck bash coreutils direnv curl \
+                    ca-certificates jq bc
             fi
             ;;
         bsd)
             info "Installing core packages via pkg..."
-            pkg_install_set git age stow just tmux shellcheck bash coreutils direnv curl ca_root_nss
+            pkg_install_set git age stow just tmux shellcheck bash coreutils direnv curl \
+                ca_root_nss jq bc
             ;;
     esac
 
@@ -845,6 +849,57 @@ setup_repo() {
     fi
     # Make sure the repo's hook directory stays active (shellcheck gate)
     git -C "$DOTS_DIR" config core.hooksPath .githooks
+}
+
+# --- Clone the tmux-powerline statusline ---
+
+TMUX_POWERLINE_REPO_URL="https://github.com/erikw/tmux-powerline.git"
+# Pinned upstream commit (main HEAD when this was integrated). Bump
+# deliberately: a new pin changes the segment/theme files under
+# ~/.config/tmux-powerline/tmux-powerline (run `just restow` to apply).
+TMUX_POWERLINE_PIN="6cfa41c7696f0d530450d509b1e07ce3d778bd4b"
+
+install_tmux_powerline() {
+    # Clone/refresh erikw/tmux-powerline at the pinned commit into
+    # ${XDG_CONFIG_HOME:-$HOME/.config}/tmux-powerline/tmux-powerline — the
+    # user-config dir stowed by the common/tmux-powerline package sits beside
+    # it. Non-fatal on failure: .tmux.conf falls back to its inline status bar.
+    local dir
+    dir="${XDG_CONFIG_HOME:-$HOME/.config}/tmux-powerline/tmux-powerline"
+
+    if [[ -d "$dir/.git" ]]; then
+        info "tmux-powerline present — resetting to pinned commit ${TMUX_POWERLINE_PIN:0:8}..."
+        if (cd "$dir" &&
+                # lowSpeed* bounds the offline case portably (no timeout(1) on macOS/Alpine)
+                git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=15 fetch --quiet origin &&
+                git checkout --quiet --detach "$TMUX_POWERLINE_PIN" &&
+                git reset --hard --quiet "$TMUX_POWERLINE_PIN"); then
+            info "tmux-powerline at pinned commit"
+        else
+            warn "Could not update tmux-powerline (offline?) — keeping the current checkout"
+            FAILURES+=("tmux-powerline: update")
+        fi
+        return 0
+    fi
+
+    if [[ -d "$dir" ]]; then
+        warn "$dir exists but is not a git clone — not touching it"
+        FAILURES+=("tmux-powerline: unexpected directory")
+        return 0
+    fi
+
+    info "Cloning tmux-powerline..."
+    # Full clone (not shallow) so future pin bumps can still resolve the SHA.
+    if ! git clone --quiet "$TMUX_POWERLINE_REPO_URL" "$dir"; then
+        warn "Could not clone tmux-powerline (offline?) — the tmux status bar"
+        warn "falls back to the plain statusline in .tmux.conf"
+        FAILURES+=("tmux-powerline: clone")
+        return 0
+    fi
+    if ! (cd "$dir" && git checkout --quiet --detach "$TMUX_POWERLINE_PIN"); then
+        warn "Pinned commit $TMUX_POWERLINE_PIN not found — the clone stays on main"
+        FAILURES+=("tmux-powerline: pin")
+    fi
 }
 
 # --- Decrypt secrets ---
@@ -939,6 +994,7 @@ main() {
         --restow|--adopt)
             require_repo
             ensure_tool stow || error "GNU Stow is required but could not be installed."
+            install_tmux_powerline
             stow_packages "$1"
             ;;
         --force)
@@ -947,6 +1003,7 @@ main() {
             install_core
             preflight_checks
             setup_repo
+            install_tmux_powerline
             decrypt_secrets
             stow_packages
             ;;
@@ -955,6 +1012,7 @@ main() {
             install_core
             preflight_checks
             setup_repo
+            install_tmux_powerline
             decrypt_secrets
             stow_packages
             ;;
