@@ -95,7 +95,14 @@ detached worker reports
 .BR "install incomplete \(ha \(em lock not written" )
 so the next
 .B cd
-retries the whole install.
+retries the whole install. The worker applies the same store\-root rule the
+direnv helpers apply on read: a backend result outside its store (e.g. a
+project
+.I .venv
+resolved by
+.B "uv python find" )
+is skipped with a warning instead of written, so the lock can never carry a
+path evaluation would reject.
 .I .envrc
 evaluation reads the lock, never the network and never resolution logic.
 .SS Commands

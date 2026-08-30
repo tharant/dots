@@ -54,8 +54,12 @@ java 17 17.0.20-amzn ~/.sdkman/candidates/java/17.0.20-amzn
 The lock is written only when **every** entry in `.runtimesrc` is satisfied —
 a failed line leaves the old lock in place (and `ensure` reports
 `install incomplete … — lock not written` in the log), so the next `cd`
-retries the whole install. `.envrc` evaluation reads the lock, never the
-network and never resolution logic.
+retries the whole install. The worker applies the same store-root rule the
+direnv helpers apply on read: a backend result outside its store (e.g. a
+project `.venv` resolved by `uv python find`) is skipped with a warning
+instead of written, so the lock can never carry a path evaluation would
+reject. `.envrc` evaluation reads the lock, never the network and never
+resolution logic.
 
 ### Commands
 
