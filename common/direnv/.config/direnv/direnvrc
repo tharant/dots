@@ -377,6 +377,9 @@ source_up_if_exists() { :; }
 _chain_near=$PWD
 while [ ! -f "$_chain_near/.envrc" ]; do
     _chain_parent=$(cd "$_chain_near/.." 2>/dev/null && pwd) || break
+    # cd /.. yields // (POSIX two-leading-slash quirk), which would never
+    # equal / — normalize so the root-termination check fires.
+    case "$_chain_parent" in //) _chain_parent=/ ;; esac
     [ "$_chain_parent" = "$_chain_near" ] && break
     _chain_near=$_chain_parent
 done
@@ -386,6 +389,9 @@ if [ -f "$_chain_near/.envrc" ] && ! grep -q "no_source_up" "$_chain_near/.envrc
     _chain_files=""
     while :; do
         _chain_parent=$(cd "$_chain_dir/.." 2>/dev/null && pwd) || break
+        # Same // normalization as above: without it the walk from $HOME
+        # never terminates at / (cd /.. -> //, // ~= /).
+        case "$_chain_parent" in //) _chain_parent=/ ;; esac
         [ "$_chain_parent" = "$_chain_dir" ] && break
         _chain_dir=$_chain_parent
         if [ -f "$_chain_dir/.envrc" ]; then
