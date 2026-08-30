@@ -46,11 +46,13 @@ is used verbatim.
 A major
 .RI ( 17 )
 resolves to the latest
+.B <major>.x.y\-amzn
+(Corretto) via the sdkman version API, falling back to
 .B <major>.x.y\-tem
-via the sdkman version API \(em
+(Temurin) when a major has no Corretto build \(em
 .B sdk list
 is never used because it forces a pager; an exact candidate ID
-.RI ( 21.0.12+1.1\-tem )
+.RI ( 21.0.12+1.1\-amzn )
 is used verbatim.
 .PP
 .B ensure
@@ -82,7 +84,7 @@ store path:
 .nf
 python 3.12 3.12.12 ~/.local/share/uv/python/cpython\-3.12.12\-macos\-x86_64\-none
 node 22 22.21.1 ~/.local/share/fnm/node\-versions/v22.21.1/installation
-java 17 17.0.20\-tem ~/.sdkman/candidates/java/17.0.20\-tem
+java 17 17.0.20\-amzn ~/.sdkman/candidates/java/17.0.20\-amzn
 .fi
 .RE
 .PP
@@ -313,7 +315,7 @@ Consume a locked runtime the way the direnv helpers do (stdout only):
 \&$ runtimes path python 3.12
 /Users/you/.local/share/uv/python/cpython\-3.12.12\-macos\-aarch64\-none/bin
 \&$ runtimes path java 17
-/Users/you/.sdkman/candidates/java/17.0.20\-tem
+/Users/you/.sdkman/candidates/java/17.0.20\-amzn
 .fi
 .RE
 .SH SEE ALSO

@@ -26,7 +26,7 @@ backends, one resolution rule each:
 |---|---|---|
 | `python` | [uv](https://docs.astral.sh/uv/) | any uv-resolvable spec (`3.12`, `3.12.7`), installed via `uv python install` |
 | `node` | [fnm](https://github.com/Schniz/fnm) | a major (`22`) resolves to the latest `vX.Y.Z` via `fnm ls-remote` at install time; a concrete `vX.Y.Z` (or `X.Y.Z`) is used verbatim |
-| `java` | [sdkman](https://sdkman.io) | a major (`17`) resolves to the latest `<major>.x.y-tem` via the sdkman version API (`sdk list` is never used — it forces a pager); an exact candidate ID (`21.0.12+1.1-tem`) is used verbatim |
+| `java` | [sdkman](https://sdkman.io) | a major (`17`) resolves to the latest `<major>.x.y-amzn` (Corretto) via the sdkman version API, falling back to `<major>.x.y-tem` (Temurin) when a major has no Corretto build (`sdk list` is never used — it forces a pager); an exact candidate ID (`21.0.12+1.1-amzn`) is used verbatim |
 
 `ensure` is the direnv hot path: it only reads local files, so a satisfied
 project is a milliseconds-fast no-op. Anything missing or changed kicks off
@@ -48,7 +48,7 @@ and the absolute store path:
 ```
 python 3.12 3.12.12 ~/.local/share/uv/python/cpython-3.12.12-macos-x86_64-none
 node 22 22.21.1 ~/.local/share/fnm/node-versions/v22.21.1/installation
-java 17 17.0.20-tem ~/.sdkman/candidates/java/17.0.20-tem
+java 17 17.0.20-amzn ~/.sdkman/candidates/java/17.0.20-amzn
 ```
 
 The lock is written only when **every** entry in `.runtimesrc` is satisfied —
@@ -190,7 +190,7 @@ Consume a locked runtime the way the direnvrc helpers do (stdout only):
 $ runtimes path python 3.12
 /Users/you/.local/share/uv/python/cpython-3.12.12-macos-aarch64-none/bin
 $ runtimes path java 17
-/Users/you/.sdkman/candidates/java/17.0.20-tem
+/Users/you/.sdkman/candidates/java/17.0.20-amzn
 ```
 
 ## See also

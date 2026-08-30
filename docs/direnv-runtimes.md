@@ -56,8 +56,9 @@ starts a comment (full-line or trailing):
 # comment lines allowed (leading #)
 python 3.12          # any uv-resolvable spec: 3.12, 3.12.7, …
 node 22              # a major → resolved to latest vX.Y.Z at install time
-java 17              # a major → resolved to latest <major>.x.y-tem (sdkman)
-java 21.0.12+1.1-tem # exact sdkman candidate IDs also accepted
+java 17              # a major → resolved to latest <major>.x.y-amzn, Corretto
+                     # preferred over Temurin (sdkman)
+java 21.0.12+1.1-amzn # exact sdkman candidate IDs also accepted
 ```
 
 Supported names: `python`, `node`, `java` (anything else logs
