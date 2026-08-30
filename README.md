@@ -43,7 +43,7 @@ dots/
 ├── common/            # Cross-platform configs (Stow packages)
 │   ├── bash/          # .bashrc, .bash_aliases, .bash_functions, ...
 │   ├── bin/           # ~/bin shims: loadavg, tmux-copy, runtimes (capability-detecting)
-│   ├── direnv/        # .config/direnv (direnvrc use_* helpers, direnv.toml), ~/.envrc starter
+│   ├── direnv/        # .config/direnv (direnvrc use_* helpers, direnv.toml), ~/.envrc root + ~/.runtimesrc defaults
 │   ├── git/           # .gitconfig, .gitignore_global
 │   ├── nvim/          # .config/nvim/init.lua (coc.nvim, clipboard-guarded)
 │   ├── ssh/           # SSH config (public parts)
@@ -84,7 +84,7 @@ The same operations are available through `just` (`just setup`, `just restow`, `
 
 ### Per-directory environments + managed runtimes
 
-[direnv](https://direnv.net/) applies folder-level env vars on `cd`, and `.envrc`s stack up the tree (`source_up_if_exists`; nearest wins, parent values persist). Projects pin runtimes in `.runtimesrc` (`python 3.12`, `node 22`, `java 17`); the first `cd` after `direnv allow` installs them detached through the [`runtimes`](docs/runtimes.md) shim (python via uv, node via fnm, java via sdkman) and the next prompt activates them — including a project-local `.venv`. Authoring is documented in the [direnv + runtimes guide](docs/direnv-runtimes.md).
+[direnv](https://direnv.net/) applies folder-level env vars on `cd`, and `.envrc`s stack up the tree (`source_up_if_exists`; nearest wins, parent values persist). The tree-root `~/.envrc` applies stowed LTS defaults (`python 3.12`, `node 24`, `java 25`), so every directory gets runtimes with no project ceremony. Projects ship their own `.envrc` + `.runtimesrc` to pin different runtimes; the first `cd` after `direnv allow` installs detached through the [`runtimes`](docs/runtimes.md) shim (python via uv, node via fnm, java via sdkman) and the next prompt activates them — including a project-local `.venv`. Authoring is documented in the [direnv + runtimes guide](docs/direnv-runtimes.md).
 
 ## Documentation
 

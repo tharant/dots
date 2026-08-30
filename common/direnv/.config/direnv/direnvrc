@@ -226,13 +226,17 @@ use_python() {
     PATH_add "$bin"
     export UV_PYTHON="$spec"
 
-    # Project venv: create once, only when the project declared python in
-    # .runtimesrc. UV_NO_PROJECT keeps uv from walking up into a parent
-    # pyproject.toml; --seed gives the venv pip without a project.
+    # Project venv: create once, only when the project's own .runtimesrc
+    # declares this spec (a chained parent applying its defaults — spec from
+    # ~/.runtimesrc — must not mint a venv for a spec the project never
+    # asked for). UV_NO_PROJECT keeps uv from walking up into a parent
+    # pyproject.toml; --seed gives the venv pip without a project. $HOME is
+    # excluded: the tree-root defaults apply runtimes everywhere but must
+    # not mint a venv at $HOME itself.
     local uv_bin
     uv_bin=$(command -v uv 2>/dev/null) || uv_bin="$HOME/.local/bin/uv"
-    if [ ! -d "$PWD/.venv" ] && [ -x "$uv_bin" ] \
-            && grep -Eq '^[[:space:]]*python([[:space:]]|#)' "$PWD/.runtimesrc" 2>/dev/null; then
+    if [ ! -d "$PWD/.venv" ] && [ -x "$uv_bin" ] && [ "$PWD" != "$HOME" ] \
+            && grep -Eq "^[[:space:]]*python[[:space:]]+${spec}([[:space:]]*#|[[:space:]]|\$)" "$PWD/.runtimesrc" 2>/dev/null; then
         log_status "use_python: creating .venv (python $resolved)"
         if ! UV_NO_PROJECT=1 "$uv_bin" venv --python "$resolved" --seed "$PWD/.venv" >/dev/null; then
             log_error "use_python: uv venv failed for python $resolved"
