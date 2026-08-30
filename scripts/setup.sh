@@ -9,6 +9,11 @@ set -euo pipefail
 # Privilege policy: commands run directly as root; otherwise sudo is used, then
 # doas. With neither (and not root) the script aborts with a clear message.
 #
+# Output policy: the terminal carries only ==> status lines; package-manager,
+# installer and git output is captured in a per-run audit log
+# (~/.local/state/dots/setup-<timestamp>.log), whose tail is printed when a
+# quiet-wrapped step fails.
+#
 # Alpine bootstrap (busybox-only base image): this script needs bash, git and
 # curl up front, so on a bare Alpine box run the two-step bootstrap:
 #     apk add bash git curl
@@ -28,6 +33,7 @@ PKG_MGR=""
 SUDO=""
 APT_UPDATED=""
 SUCCESS_MSG="Dotfiles deployed."
+AUDIT_LOG=""
 
 usage() {
     cat <<EOF
@@ -67,6 +73,7 @@ report_failures() {
         for f in "${FAILURES[@]}"; do
             warn "  - $f"
         done
+        warn "Details (package-manager and installer output): $AUDIT_LOG"
         return 1
     fi
 }
@@ -162,6 +169,34 @@ run_priv() {
     fi
 }
 
+init_audit_log() {
+    # Per-run audit log under ~/.local/state/dots/: every quiet-wrapped
+    # sub-step (package managers, installers, git) writes its output here so
+    # the terminal carries only the ==> status lines. Kept across runs for
+    # post-hoc inspection.
+    local dir="$HOME/.local/state/dots"
+    mkdir -p "$dir"
+    AUDIT_LOG="$dir/setup-$(date +%Y%m%d%H%M%S).log"
+    : > "$AUDIT_LOG"
+    info "Audit log: $AUDIT_LOG"
+}
+
+quiet() {
+    # quiet <cmd...> — run a verbose sub-step with stdout/stderr captured in
+    # the audit log. On failure the tail of the log is printed so the error
+    # itself stays on the terminal; the caller reports/records the failure
+    # (FAILURES or error()) exactly as before. `|| rc=$?` (not a plain call
+    # followed by rc=$?) both captures the real exit code and keeps errexit
+    # from firing inside this function, whatever context the caller used.
+    local rc=0
+    "$@" >>"$AUDIT_LOG" 2>&1 || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        warn "Step failed (exit $rc) — last 20 lines of $AUDIT_LOG:"
+        tail -20 "$AUDIT_LOG" >&2
+    fi
+    return $rc
+}
+
 reattach_tty() {
     # `curl ... | bash` leaves stdin on the pipe; age's passphrase prompt (and
     # chsh) need a real TTY, so reattach to /dev/tty when stdin is not one.
@@ -201,17 +236,17 @@ pkg_install() {
     # apt needs its lists refreshed once, before the first install
     if [[ "$PKG_MGR" == "apt-get" && "$APT_UPDATED" != "true" ]]; then
         info "Updating apt package lists..."
-        run_priv apt-get update
+        quiet run_priv apt-get update
         APT_UPDATED=true
     fi
 
     case "$PKG_MGR" in
-        brew)    brew install "$@" ;;                      # brew must not run as root
-        apt-get) run_priv apt-get install -y "$@" ;;
-        dnf)     run_priv dnf install -y "$@" ;;
-        pacman)  run_priv pacman -S --noconfirm "$@" ;;
-        apk)     run_priv apk add "$@" ;;
-        pkg)     run_priv pkg install -y "$@" ;;
+        brew)    quiet brew install "$@" ;;                # brew must not run as root
+        apt-get) quiet run_priv apt-get install -y "$@" ;;
+        dnf)     quiet run_priv dnf install -y "$@" ;;
+        pacman)  quiet run_priv pacman -S --noconfirm "$@" ;;
+        apk)     quiet run_priv apk add "$@" ;;
+        pkg)     quiet run_priv pkg install -y "$@" ;;
         *)       error "Unsupported package manager: $PKG_MGR" ;;
     esac
 }
@@ -404,7 +439,7 @@ install_homebrew() {
         error "Homebrew cannot be installed as root. Log in as an admin user and re-run."
     fi
     info "Homebrew not found — installing (official installer, non-interactive)..."
-    if ! NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL \
+    if ! quiet env NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL \
         https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; then
         error "Homebrew installation failed — install it from https://brew.sh and re-run."
     fi
@@ -552,7 +587,7 @@ install_utf8_locale() {
     else
         echo 'en_US.UTF-8 UTF-8' | run_priv tee -a /etc/locale.gen >/dev/null
     fi
-    run_priv "$locale_gen" || {
+    quiet run_priv "$locale_gen" || {
         warn "locale-gen failed — set LANG manually if the shell looks broken"
         FAILURES+=("locales: en_US.UTF-8")
     }
@@ -577,7 +612,7 @@ install_uv() {
         return 1
     fi
     info "Installing uv (official installer)..."
-    if ! UV_NO_MODIFY_PATH=1 sh "$tmp/uv-install.sh"; then
+    if ! quiet env UV_NO_MODIFY_PATH=1 sh "$tmp/uv-install.sh"; then
         warn "The uv installer failed"
         rm -rf "$tmp"
         return 1
@@ -627,7 +662,7 @@ install_fnm() {
         rm -rf "$tmp"
         return 1
     fi
-    if ! unzip -o "$tmp/$asset" -d "$tmp"; then
+    if ! quiet unzip -o "$tmp/$asset" -d "$tmp"; then
         warn "Could not extract the fnm release"
         rm -rf "$tmp"
         return 1
@@ -700,7 +735,7 @@ install_sdkman() {
     if ! download "https://get.sdkman.io" "$tmp/sdkman-install.sh"; then
         warn "Could not download the sdkman installer"
         installed=false
-    elif ! bash "$tmp/sdkman-install.sh"; then
+    elif ! quiet bash "$tmp/sdkman-install.sh"; then
         warn "The sdkman installer failed"
         installed=false
     fi
@@ -841,19 +876,19 @@ setup_repo() {
         info "Repo exists at $DOTS_DIR, pulling latest..."
         if [[ -n "$(git -C "$DOTS_DIR" status --porcelain)" ]]; then
             warn "Repo has local changes — pulling with --autostash"
-            git -C "$DOTS_DIR" pull --ff-only --autostash || {
+            quiet git -C "$DOTS_DIR" pull --ff-only --autostash || {
                 warn "Pull failed — keeping the current checkout"
                 FAILURES+=("git pull")
             }
         else
-            git -C "$DOTS_DIR" pull --ff-only || {
+            quiet git -C "$DOTS_DIR" pull --ff-only || {
                 warn "Pull failed — keeping the current checkout"
                 FAILURES+=("git pull")
             }
         fi
     else
         info "Cloning dotfiles repo..."
-        git clone "$REPO_URL" "$DOTS_DIR"
+        quiet git clone "$REPO_URL" "$DOTS_DIR"
     fi
     # Make sure the repo's hook directory stays active (shellcheck gate)
     git -C "$DOTS_DIR" config core.hooksPath .githooks
@@ -1018,6 +1053,10 @@ main() {
     detect_env
     reattach_tty
     detect_privilege
+    case "${1:-}" in
+        -h|--help) usage ;;
+        *)         init_audit_log ;;
+    esac
 
     case "${1:-}" in
         -h|--help)

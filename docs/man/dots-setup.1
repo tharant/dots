@@ -57,6 +57,20 @@ when it is missing) fails, reported by the ERR trap.
 .B Homebrew
 is never run with the privilege prefix.
 .PP
+Output policy: the terminal carries only the
+.B ==>
+status lines. Package\-manager (apt\-get, brew, dnf, pacman, apk, pkg \-
+including the one\-time
+.BR apt\-get\ update ),
+installer (Homebrew, uv, sdkman), locale\-generation and git (clone/pull)
+output is captured in a per\-run audit log at
+.IR ~/.local/state/dots/setup\-<timestamp>.log ,
+whose path is announced at the start of every run. A captured step that
+fails prints the last 20 lines of the log so the error itself stays on the
+terminal, and the end\-of\-run failure summary names the log. Stow and
+decrypt output is not captured: stow conflicts are immediately actionable,
+and the decrypt prompts need the terminal.
+.PP
 Platform and environment detection:
 .B uname \-s
 maps Darwin to
@@ -426,6 +440,10 @@ script kept going.
 .TP
 .I $HOME/.dots
 Default repository location.
+.TP
+.I ~/.local/state/dots/setup\-<timestamp>.log
+Per\-run audit log holding the captured package\-manager/installer/git
+output (kept across runs).
 .TP
 .I ~/.dots\-backup\-<timestamp>
 Pre\-existing
