@@ -58,7 +58,7 @@ dots/
 `.bashrc` sources every file in `~/.bashrc.platform.d/` (2-line hook — the only sanctioned conditional in `common/` besides `command -v` guards for optional tools). Each platform package ships a `bash/.bashrc.platform.d/<name>.sh`:
 
 - `macos/` → `macos.sh` (locale `en_US.UTF-8`, brew shellenv arch-aware, LSCOLORS, macOS-only functions)
-- `linux/` → `linux.sh` (locale with C.UTF-8 fallback, dircolors, `~/.local/bin` PATH)
+- `linux/` → `linux.sh` (locale with C.UTF-8 fallback, dircolors)
 - `alpine/` → `alpine.sh` (`C.UTF-8` — musl has no `en_US.UTF-8`; shipped for Alpine incl. WSL-Alpine)
 - `wsl/` → `wsl.sh` (self-detects via `/proc/version`; trims `/mnt/[a-z]` PATH entries, absolute-path `clip.exe`)
 - `bsd/` → `bsd.sh`

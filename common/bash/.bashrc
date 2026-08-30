@@ -25,6 +25,16 @@ shopt -s cdspell
 # PATH
 export PATH="${PATH}:$HOME/bin:$HOME/bin/ssh-hosts"
 
+# ~/.local/bin: where setup.sh installs uv, fnm, age and the static direnv
+# fallback. Guarded so machines that have none of those (no directory) don't
+# grow a dead PATH entry. Idempotent.
+if [[ -d "$HOME/.local/bin" ]]; then
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) export PATH="$HOME/.local/bin:$PATH" ;;
+  esac
+fi
+
 # Source modular configs
 [[ -s ~/.bash_sensible ]] && source ~/.bash_sensible
 [[ -s ~/.bash_functions ]] && source ~/.bash_functions
