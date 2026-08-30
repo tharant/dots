@@ -1,4 +1,4 @@
-.TH DOTS\-VERIFY 1 "2026-08-28" "dots" "User Commands"
+.TH DOTS\-VERIFY 1 "2026-08-30" "dots" "User Commands"
 .SH NAME
 dots\-verify \- check the health of a deployed dots configuration
 .SH SYNOPSIS
@@ -39,7 +39,7 @@ established machine. It runs under
 .B "set \-euo pipefail"
 and aborts at a failing command.
 .PP
-Four groups of checks are run.
+Five groups of checks are run.
 .SS Required tools
 .IR age ,
 .IR stow ,
@@ -199,6 +199,66 @@ fallback copies. The wording is a little loose in the second case
 (\fB.age\fP files do exist there), but the note still reads
 .BR "(no .age files found)" .
 It is informational and does not count as a failure.
+.SS "direnv + runtimes"
+Seven checks covering the direnv + runtimes integration (see
+.IR docs/direnv\-runtimes.md ):
+.TP
+.B direnv
+on
+.B PATH
+\(em soft:
+.BR dots\-setup (1)
+installs it as a hard requirement, but
+.B verify.sh
+can legitimately run pre-bootstrap, so absence is reported
+.RB ( "direnv not found (soft check; setup.sh installs it)" ),
+not failed.
+.TP
+The direnv hook in
+.IR ~/.bashrc
+\(em hard: a missing
+.IR ~/.bashrc ,
+a missing hook line
+.RB ( "direnv hook missing from \(ha" ),
+or a missing trueline source
+.RB ( "trueline source missing from \(ha (cannot confirm hook order)" )
+fails. The hook must sit on a later line than the trueline source \(em
+trueline replaces
+.B PROMPT_COMMAND
+without chaining, silently discarding a hook placed before it \(em so a
+hook at or above the trueline line also fails, with both line numbers in
+the message.
+.TP
+The repository's
+.I common/direnv/.config/direnv/direnvrc
+exists and defines
+.B use_runtimes
+\(em hard; the symlink deployment of that file is already covered by the
+symlink walk.
+.TP
+.I ~/bin/runtimes
+exists and is executable \(em hard; the executable bit lives on the
+repository file, tested through the deployed symlink.
+.TP
+.B uv
+and
+.B fnm
+on
+.B PATH
+\(em soft
+.RB ( "not found (optional)" ):
+best-effort installs; the BSD tier legitimately ships without them.
+.TP
+sdkman \(em soft: installed when either
+.B sdk
+is on
+.B PATH
+or
+.I ~/.sdkman/
+exists (the installer's
+.B sdk
+function is only loaded in interactive shells, so the install directory is
+the reliable presence signal).
 .SH OPTIONS
 .TP
 .B \-\-quiet
@@ -233,7 +293,12 @@ Searched when checking that
 .IR stow ,
 and
 .B git
-are installed.
+are installed, and for the soft
+.BR direnv ,
+.BR uv ,
+and
+.B fnm
+presence checks.
 .SH EXIT STATUS
 .TP
 .B 0
@@ -254,6 +319,17 @@ Stow packages whose contents are checked against
 .TP
 .I secrets/*/*.age
 Encrypted secrets checked for a decrypted counterpart.
+.TP
+.I ~/.bashrc
+Checked for the direnv hook, ordered after the trueline source.
+.TP
+.I common/direnv/.config/direnv/direnvrc
+Content-checked for the
+.B use_runtimes
+helper.
+.TP
+.I ~/bin/runtimes
+Checked for existence and the executable bit.
 .TP
 .I ~/.ssh
 Checked for mode 700, and for private keys matching

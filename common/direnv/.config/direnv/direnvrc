@@ -226,13 +226,17 @@ use_python() {
     PATH_add "$bin"
     export UV_PYTHON="$spec"
 
-    # Project venv: create once, only when the project declared python in
-    # .runtimesrc. UV_NO_PROJECT keeps uv from walking up into a parent
-    # pyproject.toml; --seed gives the venv pip without a project.
+    # Project venv: create once, only when the project's own .runtimesrc
+    # declares this spec (a chained parent applying its defaults — spec from
+    # ~/.runtimesrc — must not mint a venv for a spec the project never
+    # asked for). UV_NO_PROJECT keeps uv from walking up into a parent
+    # pyproject.toml; --seed gives the venv pip without a project. $HOME is
+    # excluded: the tree-root defaults apply runtimes everywhere but must
+    # not mint a venv at $HOME itself.
     local uv_bin
     uv_bin=$(command -v uv 2>/dev/null) || uv_bin="$HOME/.local/bin/uv"
-    if [ ! -d "$PWD/.venv" ] && [ -x "$uv_bin" ] \
-            && grep -Eq '^[[:space:]]*python([[:space:]]|#)' "$PWD/.runtimesrc" 2>/dev/null; then
+    if [ ! -d "$PWD/.venv" ] && [ -x "$uv_bin" ] && [ "$PWD" != "$HOME" ] \
+            && grep -Eq "^[[:space:]]*python[[:space:]]+${spec}([[:space:]]*#|[[:space:]]|\$)" "$PWD/.runtimesrc" 2>/dev/null; then
         log_status "use_python: creating .venv (python $resolved)"
         if ! UV_NO_PROJECT=1 "$uv_bin" venv --python "$resolved" --seed "$PWD/.venv" >/dev/null; then
             log_error "use_python: uv venv failed for python $resolved"
@@ -335,3 +339,78 @@ use_template() {
     fi
     log_status "use_template: expanded '$name' into $PWD"
 }
+
+# no_source_up — opt a directory out of automatic ancestor chaining (the
+# auto-chain block at the bottom of this file): when this .envrc is
+# reached — as the nearest file or as a chained ancestor — nothing above
+# it is sourced. Put it on its own line in .envrc.
+no_source_up() { :; }
+
+# Ancestor chaining is automatic (see the auto-chain block at the bottom
+# of this file): source_up_if_exists is redefined as a no-op so .envrc
+# files written to the old convention (explicit source_up_if_exists as
+# line one) keep working without double-sourcing their parents.
+source_up_if_exists() { :; }
+
+# --- Automatic ancestor chaining -----------------------------------------
+# direnv evaluates only the nearest .envrc; ancestor inheritance here is
+# the default, not per-file opt-in: before the nearest file's own body
+# runs, every ancestor .envrc above it is sourced — outermost first, so
+# the nearest file's exports and PATH prepends win while unmentioned
+# ancestor values persist. Each ancestor runs with PWD set to its own
+# directory and DIRENV_FILE pointed at it (the same contract direnv's
+# source_up gives), then PWD/DIRENV_FILE are restored for the nearest
+# file. A directory whose .envrc contains `no_source_up` (helper above)
+# opts out: its file is still sourced — it applies to descendants — but
+# the walk stops there, so it shadows everything above it. A nearest file
+# with `no_source_up` therefore stands entirely alone. watch_file is set
+# on every chained file so edits reload at the next prompt.
+#
+# Anchor: direnv sources this file while still in the standing directory
+# (DIRENV_IN_ENVRC=1 marks the context; DIRENV_FILE is not exported yet,
+# and the cd to the .envrc's own directory happens only for its body), so
+# discover the nearest .envrc the same way direnv does: the first one
+# found walking up from $PWD.
+_chain_near=$PWD
+while [ ! -f "$_chain_near/.envrc" ]; do
+    _chain_parent=$(cd "$_chain_near/.." 2>/dev/null && pwd) || break
+    [ "$_chain_parent" = "$_chain_near" ] && break
+    _chain_near=$_chain_parent
+done
+if [ -f "$_chain_near/.envrc" ] && ! grep -q "no_source_up" "$_chain_near/.envrc"; then
+    _chain_dir=$_chain_near
+    _chain_nl=$'\n'
+    _chain_files=""
+    while :; do
+        _chain_parent=$(cd "$_chain_dir/.." 2>/dev/null && pwd) || break
+        [ "$_chain_parent" = "$_chain_dir" ] && break
+        _chain_dir=$_chain_parent
+        if [ -f "$_chain_dir/.envrc" ]; then
+            _chain_files="$_chain_dir/.envrc$_chain_nl$_chain_files"
+            grep -q "no_source_up" "$_chain_dir/.envrc" && break
+        fi
+    done
+    if [ -n "$_chain_files" ]; then
+        _chain_pwd=$PWD
+        _chain_file=${DIRENV_FILE:-}
+        while IFS= read -r _chain_src; do
+            [ -n "$_chain_src" ] || continue
+            watch_file "$_chain_src"
+            if cd "$(dirname "$_chain_src")" 2>/dev/null; then
+                DIRENV_FILE="$_chain_src"
+                # shellcheck disable=SC1090
+                . "$_chain_src"
+            fi
+        done <<EOF
+$_chain_files
+EOF
+        cd "$_chain_pwd" || true
+        if [ -n "$_chain_file" ]; then
+            DIRENV_FILE="$_chain_file"
+        else
+            unset DIRENV_FILE
+        fi
+    fi
+fi
+unset _chain_near _chain_dir _chain_parent _chain_files _chain_nl \
+    _chain_pwd _chain_file _chain_src

@@ -1,18 +1,31 @@
 # direnv + runtimes: per-directory environments and managed runtimes
 
 Feature guide for the direnv integration shipped in `common/direnv/` (stowed
-to `~/.config/direnv/` and `~/.envrc`) and the [`runtimes`
+to `~/.config/direnv/`, `~/.envrc` and `~/.runtimesrc`) and the [`runtimes`
 CLI](runtimes.md) (`~/bin/runtimes`). Together they recreate the old
 workflow: `cd` anywhere, get folder-level env vars; `.envrc`s stack up the
 directory tree; runtimes (python, node, java) are pinned per project and
-installed automatically the first time you `cd` in.
+installed automatically the first time you `cd` in. A stowed tree root
+supplies **default runtimes** (python 3.12, node 24, java 25 — the current
+LTS lines) to every directory that does not pin its own, so a fresh
+blessing is useful before any project ceremony at all.
 
 Everything ships in this repo — [dots-setup(1)](dots-setup.md) installs
 direnv (hard requirement) plus uv, fnm and sdkman (best-effort, skipped on
-BSD) and wires the direnv hook into `.bashrc` after the trueline block, so
-the hook actually survives trueline's `PROMPT_COMMAND` reset.
+BSD); the stowed `~/.bashrc` carries the direnv hook right after the
+trueline block, so the hook actually survives trueline's `PROMPT_COMMAND`
+reset.
 
 ## Quick start
+
+After a blessing, every directory already evaluates the tree root
+(`~/.envrc`) and gets the `~/.runtimesrc` defaults — after one
+`direnv allow $HOME` (allow records are per-machine trust decisions,
+intentionally not shipped). The defaults install detached on the first
+prompt anywhere, and the next prompt activates them.
+
+A project that pins its own runtimes ships the standard pair — ancestors
+chain in automatically, so no `source_up_if_exists` is needed:
 
 ```bash
 mkdir ~/code/foo && cd ~/code/foo
@@ -22,7 +35,6 @@ java 17
 node 22
 EOF
 cat > .envrc <<'EOF'
-source_up_if_exists
 use_runtimes
 export FOO=bar
 EOF
@@ -81,7 +93,8 @@ virtualenv-flavoured `use_python`.
 ### Helpers
 
 - `use_runtimes [file]` — apply the runtimes declared in a `.runtimesrc`
-  (default: `$PWD/.runtimesrc`; a directory argument works too). Runs
+  (default: `$PWD/.runtimesrc`; a directory argument works too — the tree
+  root passes `$HOME/.runtimesrc` explicitly to apply the defaults). Runs
   `runtimes ensure` first (a milliseconds-fast no-op when the lock already
   satisfies the rc), then applies line by line: python via `use_python`, node
   via `use_node`, java via `use_java`. `watch_file` is set on both
@@ -99,6 +112,9 @@ virtualenv-flavoured `use_python`.
   the lock — never sdkman's `current` symlink (cross-project interference)
   — and adds `$JAVA_HOME/bin` to `PATH`.
 - `use_template <name>` — scaffold `$PWD` from a repo template (below).
+- `no_source_up` — opt the directory's `.envrc` out of automatic ancestor
+  chaining (Tree stacking below); a no-op command so the line evaluates
+  cleanly.
 
 Everything the helpers print goes through direnv's `log_status`/`log_error`
 (stderr) — stdout is the environment dump direnv evaluates and stays clean.
@@ -107,18 +123,21 @@ path` (both fast, local-only); there is never a foreground download, so a
 hung `DIRENV_WARN_TIMEOUT` (bumped to 10s in `~/.config/direnv/direnv.toml`)
 cannot hang every prompt.
 
-A typical project `.envrc` is three lines:
+A typical project `.envrc` is two lines (ancestor chaining is automatic —
+see Tree stacking below):
 
 ```bash
-source_up_if_exists     # evaluate the parent .envrc first
 use_runtimes            # apply .runtimesrc (creating .venv, wiring PATH/…)
-export FOO=bar          # project exports last, overriding parents
+export FOO=bar          # project exports last, overriding ancestors
 ```
 
 ### The venv
 
-`use_python` creates `$PWD/.venv` **once**, only when the project declares
-python in `.runtimesrc`, via
+`use_python` creates `$PWD/.venv` **once**, only when the project's own
+`.runtimesrc` declares this spec and the directory is not `$HOME` (the
+root defaults apply runtimes everywhere but never mint a venv at `$HOME`
+itself, and a chained default spec never mints one for a spec the project
+did not declare), via
 `UV_NO_PROJECT=1 uv venv --python <resolved> --seed .venv` (`UV_NO_PROJECT`
 keeps uv from walking up into a parent `pyproject.toml`; `--seed` gives the
 venv pip without a project). Creation is local and sub-second, so it
@@ -131,16 +150,57 @@ the detached `runtimes ensure` install). It then activates the venv:
 ### Tree stacking
 
 direnv walks up from the current directory and evaluates the **nearest**
-`.envrc` it finds — that one, not the whole chain. Parent values merge in
-only when the child opts in with `source_up_if_exists`: the parent is
-evaluated first, so the child's exports override redefined vars while
-unmentioned parent values persist.
+`.envrc` it finds — that one file. Ancestor inheritance is the **default**
+here: before the nearest file's own body runs, the direnvrc sources every
+ancestor `.envrc` above it, outermost first, each one running with `PWD`
+set to its own directory. The nearest file's exports and `PATH` prepends
+win; ancestor values it does not mention persist. A plain
+`mkdir child && cd child` inherits the parent's whole environment —
+including its `.venv` and runtimes — verbatim: nothing is installed and no
+venv is created, because the nearest `.envrc` still runs from the parent's
+directory.
 
-The stowed `~/.envrc` is the tree root: it is **comment-only** (an `.envrc`
-that exports nothing is a no-op), so every directory under `$HOME` without
-its own `.envrc` evaluates it cleanly and inherits nothing. Its header
-documents the chaining convention; put real exports in per-project (or
-per-subtree) `.envrc` files instead of editing it.
+`no_source_up` on its own line opts a directory out: its `.envrc` still
+applies to descendants, but nothing above it is sourced (a nearest file
+with it stands entirely alone). `source_up_if_exists` is redefined as a
+no-op for compatibility with the earlier convention — new `.envrc` files
+don't need it.
+
+### Root defaults
+
+The stowed `~/.envrc` is the tree root and is **active**: it applies the
+stowed `~/.runtimesrc` defaults:
+
+```
+python 3.12
+node 24
+java 25
+```
+
+The defaults are resolved and installed **once** into `~/.runtimes.lock`
+(`runtimes ensure $HOME`, kicked off by the first evaluation anywhere), so
+every directory without its own `.envrc` gets the same three runtimes on
+`PATH` — with no per-directory ceremony at all. direnv evaluates an
+`.envrc` from that file's own directory, so the root always runs with
+`PWD=$HOME` and cannot see the standing directory: a project wanting
+different runtimes must ship its own `.envrc` (the standard two-liner
+above — direnv evaluates the nearest `.envrc` only).
+
+How a project's pins interact with the defaults follows the chaining rule
+above: the root is chained in first and the project's `use_runtimes`
+stacks on top — a project pinning `java 17` gets java 17 (the later
+`JAVA_HOME` export and `PATH` prepend win) **plus** the default
+python/node still on `PATH`; `no_source_up` in the project `.envrc` skips
+the root entirely for a wholesale replacement. The defaults never mint a
+venv: `use_python` skips `$HOME`, and when chained it only creates
+`$PWD/.venv` for a spec the project's own `.runtimesrc` declares.
+
+The root itself needs a one-time `direnv allow $HOME` per machine (fresh
+blessing, after a restow, or after editing it). On the Alpine/WSL aarch64
+tier the `node 24` default can never install (the musl gap below), which
+leaves `~/.runtimes.lock` unwritten and the install retried on every
+`cd` — edit `~/.runtimesrc` (a symlink into the repo clone) to drop the
+node line there, or accept the retry status line.
 
 ## Templates (`use_template`)
 
@@ -164,13 +224,16 @@ file, and a `notes.local` the manifest ignores.
 ## Troubleshooting
 
 - **`cd` does nothing** (no "loading .envrc" line): direnv only runs from its
-  shell hook. The hook is installed after the trueline block in `.bashrc` —
-  trueline resets `PROMPT_COMMAND` without chaining, so a hook placed before
-  it is silently discarded. `just verify` checks both presence and order.
-  Also confirm direnv itself is installed (`command -v direnv`).
+  shell hook. The hook ships in the stowed `.bashrc` after the trueline
+  block — trueline resets `PROMPT_COMMAND` without chaining, so a hook
+  placed before it is silently discarded. `just verify` checks both
+  presence and order. Also confirm direnv itself is installed
+  (`command -v direnv`).
 - **`.envrc is blocked`**: direnv requires `direnv allow` in the project
   directory after every edit of `.envrc` (the allow record is a per-machine
-  trust decision hashed on file content — intentionally not shipped). Use
+  trust decision hashed on file content — intentionally not shipped). The
+  tree root is no exception: `direnv allow $HOME` once per machine, after a
+  bless, after a restow, or after editing `~/.envrc`. Use
   `direnv deny` to revoke.
 - **The new runtime is installed but not applied yet**: remember direnv is
   prompt-driven. The detached install finishing writes `.runtimes.lock`,

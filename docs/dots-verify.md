@@ -26,7 +26,7 @@ The script is written for the bash 3.2 that ships with macOS (no associative
 arrays; the secrets target mapping is a `case` statement), and runs under
 `set -euo pipefail`, so a failing command aborts it.
 
-Four groups of checks are run, in this order:
+Five groups of checks are run, in this order:
 
 ### Required tools
 
@@ -108,6 +108,34 @@ is a little loose in the second case (`.age` files do exist there), but the
 note still reads `(no .age files found)`. It is informational and does not
 count as a failure.
 
+### direnv + runtimes
+
+Seven checks covering the [direnv + runtimes
+integration](direnv-runtimes.md):
+
+- `direnv` on `PATH` — soft: `dots-setup(1)` installs it as a hard
+  requirement, but `dots-verify` can legitimately run pre-bootstrap, so
+  absence is reported (`direnv not found (soft check; setup.sh installs
+  it)`), not failed.
+- The direnv hook in `~/.bashrc` — hard: a missing `~/.bashrc`, a missing
+  hook line (`direnv hook missing from …`), or a missing trueline source
+  (`trueline source missing from … (cannot confirm hook order)`) fails.
+  The hook must sit on a **later line** than the trueline source —
+  trueline replaces `PROMPT_COMMAND` without chaining, silently discarding
+  a hook placed before it — so a hook at or above the trueline line also
+  fails, with both line numbers in the message.
+- The repo's `common/direnv/.config/direnv/direnvrc` exists and defines
+  `use_runtimes` — hard; the symlink deployment of that file is already
+  covered by the symlink walk.
+- `~/bin/runtimes` exists and is executable — hard (the executable bit
+  lives on the repo file, tested through the deployed symlink).
+- `uv` and `fnm` on `PATH` — soft (`<tool> not found (optional)`): they
+  are best-effort installs and the BSD tier legitimately ships without
+  them.
+- sdkman — soft: installed when either `sdk` is on `PATH` or
+  `~/.sdkman/` exists (the installer's `sdk` function is only loaded in
+  interactive shells, so the install dir is the reliable presence signal).
+
 ## Options
 
 - `--quiet` — suppress per-check output: the `==>` section banners, the green
@@ -123,7 +151,8 @@ count as a failure.
   `~/.ssh` and `~/.config/tokens`.
 - `REPO_DIR` — set by the script to the repository root (parent of the
   script's directory) and exported to child processes.
-- `PATH` — searched when checking that `age`, `stow`, and `git` are installed.
+- `PATH` — searched when checking that `age`, `stow`, and `git` are
+  installed, and for the soft `direnv`, `uv`, and `fnm` presence checks.
 
 ## Exit status
 
@@ -138,6 +167,11 @@ count as a failure.
 - `common/*/`, `<platform>/*/` — Stow packages whose contents are checked
   against `$HOME`.
 - `secrets/*/*.age` — encrypted secrets checked for a decrypted counterpart.
+- `~/.bashrc` — checked for the direnv hook, ordered after the trueline
+  source.
+- `common/direnv/.config/direnv/direnvrc` — content-checked for the
+  `use_runtimes` helper.
+- `~/bin/runtimes` — checked for existence and the executable bit.
 - `~/.ssh` — checked for mode `700`, and for private keys matching `id_*`
   (not `*.pub`) with mode `600`.
 - `~/.config/tokens` — target directory for secrets stored under
@@ -160,7 +194,9 @@ scripts establish: the tool checks cover what `dots-setup(1)` installs, the
 symlink checks cover what `dots-setup(1)` stows from `common/` and the
 platform directory (and what [stow adopt](stow-adopt-workflow.md) folded
 into the repo) — the `alpine/` and `wsl/` layers setup also stows are not
-walked — the permission
+walked — the direnv + runtimes checks cover the hook placement the stowed
+`.bashrc` ships, the direnvrc helpers and the `~/bin/runtimes` shim (with
+soft presence for the best-effort backends), the permission
 checks cover what `dots-decrypt(1)` enforces on private keys, and the
 decrypted-secrets checks cover what `dots-decrypt(1)` produced from the
 artifacts `dots-encrypt(1)` created.

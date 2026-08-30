@@ -43,7 +43,7 @@ dots/
 ├── common/            # Cross-platform configs (Stow packages)
 │   ├── bash/          # .bashrc, .bash_aliases, .bash_functions, ...
 │   ├── bin/           # ~/bin shims: loadavg, tmux-copy, runtimes (capability-detecting)
-│   ├── direnv/        # .config/direnv (direnvrc use_* helpers, direnv.toml), ~/.envrc starter
+│   ├── direnv/        # .config/direnv (direnvrc use_* helpers, direnv.toml), ~/.envrc root + ~/.runtimesrc defaults
 │   ├── git/           # .gitconfig, .gitignore_global
 │   ├── nvim/          # .config/nvim/init.lua (coc.nvim, clipboard-guarded)
 │   ├── ssh/           # SSH config (public parts)
@@ -77,14 +77,14 @@ Platform overrides must **not** be conditionals in `common/`. Instead, each plat
 ./scripts/setup.sh --unstow                   # Remove all managed symlinks
 ./scripts/encrypt.sh <plaintext> <output.age> # Encrypt a file
 ./scripts/decrypt.sh                          # Decrypt all secrets
-./scripts/verify.sh                           # Check symlink + permissions health
+./scripts/verify.sh                           # Deployment health check (tools, symlinks, permissions, secrets, direnv)
 ```
 
 The same operations are available through `just` (`just setup`, `just restow`, `just verify`, `just encrypt <file>`, `just lint`, …) — run `just` for the full list.
 
 ### Per-directory environments + managed runtimes
 
-[direnv](https://direnv.net/) applies folder-level env vars on `cd`, and `.envrc`s stack up the tree (`source_up_if_exists`; nearest wins, parent values persist). Projects pin runtimes in `.runtimesrc` (`python 3.12`, `node 22`, `java 17`); the first `cd` after `direnv allow` installs them detached through the [`runtimes`](docs/runtimes.md) shim (python via uv, node via fnm, java via sdkman) and the next prompt activates them — including a project-local `.venv`. Authoring is documented in the [direnv + runtimes guide](docs/direnv-runtimes.md).
+[direnv](https://direnv.net/) applies folder-level env vars on `cd`; `.envrc`s chain up the tree by default (opt out with `no_source_up`; nearest wins, ancestor values persist). The tree-root `~/.envrc` applies stowed LTS defaults (`python 3.12`, `node 24`, `java 25`), so every directory gets runtimes with no project ceremony. Projects ship their own `.envrc` + `.runtimesrc` to pin different runtimes; the first `cd` after `direnv allow` installs detached through the [`runtimes`](docs/runtimes.md) shim (python via uv, node via fnm, java via sdkman) and the next prompt activates them — including a project-local `.venv`. Authoring is documented in the [direnv + runtimes guide](docs/direnv-runtimes.md).
 
 ## Documentation
 
@@ -96,7 +96,7 @@ agreement with the code they document:
 | [dots-setup(1)](docs/dots-setup.md) | `scripts/setup.sh` — bootstrap, restow, adopt, unstow |
 | [dots-encrypt(1)](docs/dots-encrypt.md) | `scripts/encrypt.sh` — write the dual age artifacts |
 | [dots-decrypt(1)](docs/dots-decrypt.md) | `scripts/decrypt.sh` — materialize secrets locally |
-| [dots-verify(1)](docs/dots-verify.md) | `scripts/verify.sh` — symlink + permissions health check |
+| [dots-verify(1)](docs/dots-verify.md) | `scripts/verify.sh` — deployment health check: tools, symlinks, permissions, secrets, direnv + runtimes |
 | [loadavg(1)](docs/loadavg.md) | `~/bin/loadavg` — status-bar load shim (`common/bin`) |
 | [tmux-copy(1)](docs/tmux-copy.md) | `~/bin/tmux-copy` — clipboard ladder + OSC 52 (`common/bin`) |
 | [runtimes(1)](docs/runtimes.md) | `~/bin/runtimes` — managed runtimes CLI: uv/fnm/sdkman (`common/bin`) |

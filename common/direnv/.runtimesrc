@@ -1,0 +1,8 @@
+# Default runtimes for every directory without its own .runtimesrc,
+# applied by the tree-root ~/.envrc. Resolved and installed once into
+# ~/.runtimes.lock by `runtimes ensure $HOME`; a project overrides these
+# by shipping its own .runtimesrc (nearest wins). Current LTS lines:
+# java 25, node 24; python has no LTS — 3.12 is the mature stable line.
+python 3.12
+node 24
+java 25

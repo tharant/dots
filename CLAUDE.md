@@ -17,7 +17,8 @@ dots/
 │   ├── bin/         # ~/bin shims: loadavg(1), tmux-copy(1), runtimes(1)
 │   │                #   (portable, one file for all; documented in docs/)
 │   ├── direnv/      # .config/direnv (direnvrc use_* helpers, direnv.toml),
-│   │                #   ~/.envrc tree-root starter
+│   │                #   active ~/.envrc tree root + ~/.runtimesrc defaults
+│   │                #   (LTS: python 3.12, node 24, java 25)
 │   ├── git/         # .gitconfig, .gitignore_global
 │   ├── nvim/        # .config/nvim/init.lua (clipboard-guarded)
 │   ├── ssh/         # ssh config (portable; UseKeychain behind IgnoreUnknown)
