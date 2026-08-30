@@ -92,8 +92,8 @@ let s:themes = {
       \ }
 
 function! s:LoadTheme() abort
-  let name = filereadable(s:theme_file) ? trim(readfile(s:theme_file)[0]) : 'gruvbox'
-  return has_key(s:themes, name) ? name : 'gruvbox'
+  let name = filereadable(s:theme_file) ? trim(readfile(s:theme_file)[0]) : 'codedark'
+  return has_key(s:themes, name) ? name : 'codedark'
 endfunction
 
 " Second (optional) argument: quiet — apply without a message. Startup uses
