@@ -1,0 +1,40 @@
+colorscheme:ollama
+
+# --- Hard failures ---
+cs_re:white,red:CHECK failed:.*$
+cs_re:white,red:Failed to load MLX dynamic library.*$
+cs_re:white,red:MLX dynamic library not available.*$
+cs_re:white,red:\blevel=ERROR\b.*
+cs_re:white,red:\bERROR\b.*
+
+# --- Warnings ---
+cs_re:black,yellow:\blevel=WARN\b.*
+cs_re:black,yellow:\bWARN\b.*
+
+# --- Info ---
+cs_re:cyan:\blevel=INFO\b.*
+cs_re:cyan:\bINFO\b.*
+
+# --- Lifecycle markers ---
+cs_re:green:msg="Listening on .*\(version .*\)".*$
+cs_re:magenta:msg="discovering available GPUs\.\.\.".*
+cs_re:magenta:msg="starting runner".*
+cs_re:blue:msg="inference compute".*
+cs_re:blue:msg="server config".*
+cs_re:blue:msg="total blobs:".*
+cs_re:blue:msg="total unused blobs removed:".*
+
+# --- Gin logs ---
+cs_re:blue:\[GIN\].*$
+cs_re:green:\[GIN\].*\|\s*2[0-9][0-9]\s*\|.*$
+cs_re:black,yellow:\[GIN\].*\|\s*3[0-9][0-9]\s*\|.*$
+cs_re:white,red:\[GIN\].*\|\s*4[0-9][0-9]\s*\|.*$
+cs_re:white,red:\[GIN\].*\|\s*5[0-9][0-9]\s*\|.*$
+
+# --- Substring highlighting (POSIX ERE friendly) ---
+cs_re_s:green:msg="([^"]+)"
+cs_re_s:magenta:source=([^ ]+)
+cs_re_s:yellow:(/[^ ]+)
+cs_re_s:cyan:\|\s*[0-9]+\s*\|\s*[0-9.µmsh]+s?\s*\|\s*[0-9.:]+\s*\|\s*([A-Z]+)\s*(".*")$
+cs_re_s:yellow:\|\s*[0-9]+\s*\|\s*([0-9.]+(µs|ms|s)|[0-9]+m[0-9]+s)\s*\|
+
