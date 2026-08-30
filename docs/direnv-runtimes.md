@@ -23,8 +23,8 @@ After a blessing, every directory already evaluates the tree root
 intentionally not shipped). The defaults install detached on the first
 prompt anywhere, and the next prompt activates them.
 
-A project that pins its own runtimes (replacing the defaults wholesale)
-ships the standard pair:
+A project that pins its own runtimes ships the standard pair — ancestors
+chain in automatically, so no `source_up_if_exists` is needed:
 
 ```bash
 mkdir ~/code/foo && cd ~/code/foo
@@ -34,7 +34,6 @@ java 17
 node 22
 EOF
 cat > .envrc <<'EOF'
-source_up_if_exists
 use_runtimes
 export FOO=bar
 EOF
@@ -112,6 +111,9 @@ virtualenv-flavoured `use_python`.
   the lock — never sdkman's `current` symlink (cross-project interference)
   — and adds `$JAVA_HOME/bin` to `PATH`.
 - `use_template <name>` — scaffold `$PWD` from a repo template (below).
+- `no_source_up` — opt the directory's `.envrc` out of automatic ancestor
+  chaining (Tree stacking below); a no-op command so the line evaluates
+  cleanly.
 
 Everything the helpers print goes through direnv's `log_status`/`log_error`
 (stderr) — stdout is the environment dump direnv evaluates and stays clean.
@@ -120,12 +122,12 @@ path` (both fast, local-only); there is never a foreground download, so a
 hung `DIRENV_WARN_TIMEOUT` (bumped to 10s in `~/.config/direnv/direnv.toml`)
 cannot hang every prompt.
 
-A typical project `.envrc` is three lines:
+A typical project `.envrc` is two lines (ancestor chaining is automatic —
+see Tree stacking below):
 
 ```bash
-source_up_if_exists     # evaluate the parent .envrc first
 use_runtimes            # apply .runtimesrc (creating .venv, wiring PATH/…)
-export FOO=bar          # project exports last, overriding parents
+export FOO=bar          # project exports last, overriding ancestors
 ```
 
 ### The venv
@@ -147,16 +149,26 @@ the detached `runtimes ensure` install). It then activates the venv:
 ### Tree stacking
 
 direnv walks up from the current directory and evaluates the **nearest**
-`.envrc` it finds — that one, not the whole chain. Parent values merge in
-only when the child opts in with `source_up_if_exists`: the parent is
-evaluated first, so the child's exports override redefined vars while
-unmentioned parent values persist.
+`.envrc` it finds — that one file. Ancestor inheritance is the **default**
+here: before the nearest file's own body runs, the direnvrc sources every
+ancestor `.envrc` above it, outermost first, each one running with `PWD`
+set to its own directory. The nearest file's exports and `PATH` prepends
+win; ancestor values it does not mention persist. A plain
+`mkdir child && cd child` inherits the parent's whole environment —
+including its `.venv` and runtimes — verbatim: nothing is installed and no
+venv is created, because the nearest `.envrc` still runs from the parent's
+directory.
+
+`no_source_up` on its own line opts a directory out: its `.envrc` still
+applies to descendants, but nothing above it is sourced (a nearest file
+with it stands entirely alone). `source_up_if_exists` is redefined as a
+no-op for compatibility with the earlier convention — new `.envrc` files
+don't need it.
 
 ### Root defaults
 
-The stowed `~/.envrc` is the tree root and is **active**: it chains
-`source_up_if_exists` (a no-op unless something above `$HOME` carries an
-`.envrc`) and applies the stowed `~/.runtimesrc` defaults:
+The stowed `~/.envrc` is the tree root and is **active**: it applies the
+stowed `~/.runtimesrc` defaults:
 
 ```
 python 3.12
@@ -170,16 +182,16 @@ every directory without its own `.envrc` gets the same three runtimes on
 `PATH` — with no per-directory ceremony at all. direnv evaluates an
 `.envrc` from that file's own directory, so the root always runs with
 `PWD=$HOME` and cannot see the standing directory: a project wanting
-different runtimes must ship its own `.envrc` (the standard three-liner
+different runtimes must ship its own `.envrc` (the standard two-liner
 above — direnv evaluates the nearest `.envrc` only).
 
 How a project's pins interact with the defaults follows the chaining rule
-above: with `source_up_if_exists` the root runs first and the project's
-`use_runtimes` stacks on top — a project pinning `java 17` gets java 17
-(the later `JAVA_HOME` export and `PATH` prepend win) **plus** the
-default python/node still on `PATH`; dropping `source_up_if_exists`
-skips the root entirely for a wholesale replacement. The defaults never
-mint a venv: `use_python` skips `$HOME`, and when chained it only creates
+above: the root is chained in first and the project's `use_runtimes`
+stacks on top — a project pinning `java 17` gets java 17 (the later
+`JAVA_HOME` export and `PATH` prepend win) **plus** the default
+python/node still on `PATH`; `no_source_up` in the project `.envrc` skips
+the root entirely for a wholesale replacement. The defaults never mint a
+venv: `use_python` skips `$HOME`, and when chained it only creates
 `$PWD/.venv` for a spec the project's own `.runtimesrc` declares.
 
 The root itself needs a one-time `direnv allow $HOME` per machine (fresh
