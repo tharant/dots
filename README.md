@@ -77,7 +77,7 @@ Platform overrides must **not** be conditionals in `common/`. Instead, each plat
 ./scripts/setup.sh --unstow                   # Remove all managed symlinks
 ./scripts/encrypt.sh <plaintext> <output.age> # Encrypt a file
 ./scripts/decrypt.sh                          # Decrypt all secrets
-./scripts/verify.sh                           # Check symlink + permissions health
+./scripts/verify.sh                           # Deployment health check (tools, symlinks, permissions, secrets, direnv)
 ```
 
 The same operations are available through `just` (`just setup`, `just restow`, `just verify`, `just encrypt <file>`, `just lint`, …) — run `just` for the full list.
@@ -96,7 +96,7 @@ agreement with the code they document:
 | [dots-setup(1)](docs/dots-setup.md) | `scripts/setup.sh` — bootstrap, restow, adopt, unstow |
 | [dots-encrypt(1)](docs/dots-encrypt.md) | `scripts/encrypt.sh` — write the dual age artifacts |
 | [dots-decrypt(1)](docs/dots-decrypt.md) | `scripts/decrypt.sh` — materialize secrets locally |
-| [dots-verify(1)](docs/dots-verify.md) | `scripts/verify.sh` — symlink + permissions health check |
+| [dots-verify(1)](docs/dots-verify.md) | `scripts/verify.sh` — deployment health check: tools, symlinks, permissions, secrets, direnv + runtimes |
 | [loadavg(1)](docs/loadavg.md) | `~/bin/loadavg` — status-bar load shim (`common/bin`) |
 | [tmux-copy(1)](docs/tmux-copy.md) | `~/bin/tmux-copy` — clipboard ladder + OSC 52 (`common/bin`) |
 | [runtimes(1)](docs/runtimes.md) | `~/bin/runtimes` — managed runtimes CLI: uv/fnm/sdkman (`common/bin`) |

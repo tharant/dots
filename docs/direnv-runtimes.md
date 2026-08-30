@@ -12,8 +12,9 @@ blessing is useful before any project ceremony at all.
 
 Everything ships in this repo — [dots-setup(1)](dots-setup.md) installs
 direnv (hard requirement) plus uv, fnm and sdkman (best-effort, skipped on
-BSD) and wires the direnv hook into `.bashrc` after the trueline block, so
-the hook actually survives trueline's `PROMPT_COMMAND` reset.
+BSD); the stowed `~/.bashrc` carries the direnv hook right after the
+trueline block, so the hook actually survives trueline's `PROMPT_COMMAND`
+reset.
 
 ## Quick start
 
@@ -223,10 +224,11 @@ file, and a `notes.local` the manifest ignores.
 ## Troubleshooting
 
 - **`cd` does nothing** (no "loading .envrc" line): direnv only runs from its
-  shell hook. The hook is installed after the trueline block in `.bashrc` —
-  trueline resets `PROMPT_COMMAND` without chaining, so a hook placed before
-  it is silently discarded. `just verify` checks both presence and order.
-  Also confirm direnv itself is installed (`command -v direnv`).
+  shell hook. The hook ships in the stowed `.bashrc` after the trueline
+  block — trueline resets `PROMPT_COMMAND` without chaining, so a hook
+  placed before it is silently discarded. `just verify` checks both
+  presence and order. Also confirm direnv itself is installed
+  (`command -v direnv`).
 - **`.envrc is blocked`**: direnv requires `direnv allow` in the project
   directory after every edit of `.envrc` (the allow record is a per-machine
   trust decision hashed on file content — intentionally not shipped). The
