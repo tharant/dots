@@ -47,6 +47,8 @@ dots/
 │   ├── git/           # .gitconfig, .gitignore_global
 │   ├── nvim/          # .config/nvim/init.lua (coc.nvim, clipboard-guarded)
 │   ├── ssh/           # SSH config (public parts)
+│   ├── sbt/           # .sbt/repositories (config leaf only — caches stay in $HOME)
+│   ├── ivy2/          # .ivy2/ skeleton (config leaf only — caches stay in $HOME)
 │   ├── tmux/          # .tmux.conf (single, identical on every platform)
 │   ├── tmux-powerline/ # .config/tmux-powerline/: config.sh + themes/dots.sh
 │   │                  #   (plugin itself cloned by setup.sh, pinned)
@@ -108,7 +110,7 @@ just man-install     # symlinks docs/man/*.1 into ~/.local/share/man/man1
 just man-check       # mandoc -T lint on all pages
 ```
 
-Other reference docs live alongside: [bash startup order](docs/bash-startup-order.md), [stow adopt workflow](docs/stow-adopt-workflow.md), [direnv + runtimes guide](docs/direnv-runtimes.md).
+Other reference docs live alongside: [bash startup order](docs/bash-startup-order.md), [stow adopt workflow](docs/stow-adopt-workflow.md), [mixed config+cache dotdirs (sbt, ivy2)](docs/stow-packages.md), [direnv + runtimes guide](docs/direnv-runtimes.md).
 
 ## Secrets
 

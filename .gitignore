@@ -39,3 +39,10 @@ common/vim/.vim/.theme
 tags
 doc/tags
 .claude/
+
+# sbt/ivy2 runtime caches inside stowed dotdirs (leaf-files-only policy,
+# see docs/stow-packages.md — config leaves are tracked, caches never are)
+common/sbt/.sbt/boot/
+common/sbt/.sbt/1.0/staging/
+common/sbt/.sbt/1.0/java9-rt-ext-*/
+common/ivy2/.ivy2/cache/
