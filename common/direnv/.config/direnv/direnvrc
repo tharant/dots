@@ -271,7 +271,8 @@ use_node() {
 }
 
 # use_java <spec> — sdkman-managed JDK (a major like 17 resolves to the
-# latest <major>.x.y-tem at ensure time; exact candidate IDs also work).
+# latest <major>.x.y at ensure time, Corretto -amzn preferred over Temurin
+# -tem; exact candidate IDs also work).
 # JAVA_HOME comes from the concrete candidate dir in the lock — never
 # sdkman's `current` symlink (cross-project interference), and never
 # sourcing sdkman-init.sh in an evaluation (bash-4 requirement).

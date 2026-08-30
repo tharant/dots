@@ -288,13 +288,14 @@ backend_node() {
 }
 
 backend_java() {
-    local spec=$1 resolved="" installdir platform url
+    local spec=$1 resolved="" installdir platform url listing=""
     case $spec in
-        *[!0-9]*)  # exact sdkman candidate ID (e.g. 21.0.12+1.1-tem)
+        *[!0-9]*)  # exact sdkman candidate ID (e.g. 21.0.12+1.1-amzn)
             resolved=$spec
             ;;
-        *)         # major: resolve to the latest <major>.x.y-tem via the
-                   # version API — never `sdk list`, which forces a pager.
+        *)         # major: resolve to the latest <major>.x.y via the version
+                   # API — never `sdk list`, which forces a pager. Corretto
+                   # (-amzn) is preferred, Temurin (-tem) is the fallback.
             case "$(uname -s)" in
                 Darwin) platform=darwin ;;
                 *)      platform=linux ;;
@@ -302,12 +303,17 @@ backend_java() {
             url="https://api.sdkman.io/2/candidates/java/${platform}/versions/list?current=&installed="
             # The API answers with a human-readable table
             # (Vendor | Use | Version | Identifier), not bare ids: keep the
-            # temurin rows, take the Identifier (last field of the row), then
+            # vendor's rows, take the Identifier (last field of the row), then
             # match the major on that id. The trailing "$ sdk install ..."
-            # hint line also ends in -tem but never matches a major grep.
-            resolved=$(fetch "$url" | grep -E -- "-tem$" | awk '{print $NF}' \
-                | grep -E "^${spec}\.[0-9]" | latest_version) || true
-            [ -n "$resolved" ] || die "no temurin java ${spec}.x.y found via sdkman"
+            # hint line also ends in a vendor tag but never matches a major
+            # grep.
+            listing=$(fetch "$url")
+            resolved=$(printf '%s\n' "$listing" | grep -E -- "-amzn$" \
+                | awk '{print $NF}' | grep -E "^${spec}\.[0-9]" | latest_version)
+            [ -n "$resolved" ] || resolved=$(printf '%s\n' "$listing" \
+                | grep -E -- "-tem$" | awk '{print $NF}' \
+                | grep -E "^${spec}\.[0-9]" | latest_version)
+            [ -n "$resolved" ] || die "no java ${spec}.x.y found via sdkman (corretto or temurin)"
             ;;
     esac
     installdir="$SDKMAN_DIR/candidates/java/$resolved"
