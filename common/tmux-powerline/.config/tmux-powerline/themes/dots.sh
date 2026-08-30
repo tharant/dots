@@ -101,8 +101,8 @@ fi
 # Alternating pill/hi backgrounds keep neighboring segments readable against
 # the bar.
 TMUX_POWERLINE_RIGHT_STATUS_SEGMENTS=(
-	"tmux_mem_cpu_load $TPL_PILL_HI $TPL_GREEN"
 	#"weather $TPL_PILL $TPL_ACCENT"
+	"tmux_mem_cpu_load $TPL_PILL_HI $TPL_GREEN"
 	"lan_ip $TPL_PILL_HI $TPL_FG_DIM"
 	#"wan_ip $TPL_PILL_HI $TPL_FG_DIM"
 	#"vcs_branch $TPL_PILL $TPL_PURPLE"
