@@ -1,0 +1,13 @@
+# sbt global repositories, read by the sbt launcher.
+#
+# Note: defining this file REPLACES the launcher's default repository list,
+# so the defaults below must stay. Add mirrors/resolvers beneath them only.
+#
+# Cache/README policy: this is one of the only ~/.sbt paths that is config.
+# Everything else sbt writes (boot/, staging/, java9-rt-ext-*) is machine-local
+# cache and must stay out of this package — see docs/stow-packages.md.
+[repositories]
+  local
+  maven-central
+  # Add org-facing resolvers here, e.g.:
+  # my-mirror: https://nexus.example.com/repository/maven-public/
