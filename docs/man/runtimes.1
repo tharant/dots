@@ -10,7 +10,7 @@ is the CLI half of the direnv integration: it reads a project's
 .IR .runtimesrc ,
 resolves each declared runtime through its backend, and records the
 concrete result in the project's
-.IR .runtimes.lock .
+.IR .runtimesrc.lock .
 It is deployed as
 .I ~/bin/runtimes
 by
@@ -67,7 +67,7 @@ evaluation never blocks on the network. A pid guard under
 makes installs single-flight: while one runs, further
 .B ensure
 calls print one status line and exit 0. When the install finishes it writes
-.I .runtimes.lock
+.I .runtimesrc.lock
 atomically (temp file + rename), so a project never sees a half-applied
 environment.
 .PP
@@ -76,7 +76,7 @@ stdout is reserved for
 output (machine-consumed by the direnv helpers); every human-facing message
 goes to stderr.
 .SS "The lock file"
-.I .runtimes.lock
+.I .runtimesrc.lock
 holds one line per runtime, recording the resolved version and the absolute
 store path:
 .PP
@@ -105,6 +105,17 @@ is skipped with a warning instead of written, so the lock can never carry a
 path evaluation would reject.
 .I .envrc
 evaluation reads the lock, never the network and never resolution logic.
+.PP
+The lock was previously named
+.IR .runtimes.lock ;
+machines blessed before the rename migrate automatically \(em
+.B ensure
+renames an old-name lock to the new name (content untouched, only in
+directories that have a
+.IR .runtimesrc )
+as its first act, so the migration happens on the next
+.B cd
+into each project.
 .SS Commands
 .TP
 .BI "ensure " [ dir ]
@@ -141,14 +152,14 @@ sdkman candidates except
 plus the store and state paths, and the project
 .I .runtimesrc
 and
-.I .runtimes.lock
+.I .runtimesrc.lock
 when the current directory has one.
 .TP
 .BI "path " "<name> <spec> [ dir ]"
 Print the runtime's bin dir (python, node) or
 .B JAVA_HOME
 (java) from
-.IR <dir>/.runtimes.lock
+.IR <dir>/.runtimesrc.lock
 (default: the current directory); this is what the direnv helpers consume.
 Exit 1 when the lock has no matching entry
 .RB ( "<name> <spec> not satisfied in <dir>" )
@@ -263,7 +274,7 @@ per line;
 .B #
 starts a comment.
 .TP
-.I .runtimes.lock
+.I .runtimesrc.lock
 Per-project resolved versions and store paths, written by
 .BR ensure 's
 detached worker.

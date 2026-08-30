@@ -14,6 +14,7 @@ id_*
 !.env.example
 
 # direnv/runtimes runtime artifacts (locks + venvs minted by evaluation)
+.runtimesrc.lock
 .runtimes.lock
 .venv/
 

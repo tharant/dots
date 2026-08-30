@@ -50,7 +50,7 @@ runtimes: installing python 3.12, java 17, node 22 (log: ~/.local/state/runtimes
 
 The install runs **detached** — evaluation never blocks on it. Subsequent
 prompts print one `install still in progress` status line while it runs. When
-it finishes, the worker writes `.runtimes.lock`, and `use_runtimes`'s
+it finishes, the worker writes `.runtimesrc.lock`, and `use_runtimes`'s
 `watch_file` makes direnv re-evaluate `.envrc` at the **next prompt** —
 `PATH`, `JAVA_HOME`, `VIRTUAL_ENV` and `UV_PYTHON` are then live. direnv is
 prompt-driven, not event-driven, so "reload at the next prompt" is the
@@ -76,12 +76,15 @@ java 21.0.12+1.1-amzn # exact sdkman candidate IDs also accepted
 Supported names: `python`, `node`, `java` (anything else logs
 `unknown runtime '…'`). Resolution is the CLI's job —
 [runtimes(1)](runtimes.md) — and happens only at install time; `.envrc`
-evaluation reads the resulting `.runtimes.lock` and never the network.
+evaluation reads the resulting `.runtimesrc.lock` and never the network.
 
-`.runtimes.lock` sits next to `.runtimesrc` and records the concrete
+`.runtimesrc.lock` sits next to `.runtimesrc` and records the concrete
 resolved version + store path per line (absolute paths, so it is
 machine-local by nature). Deleting the lock forces a re-ensure on the next
-`cd` — useful after a store wipe or to force a re-resolve.
+`cd` — useful after a store wipe or to force a re-resolve. The lock was
+previously named `.runtimes.lock` — blessed machines migrate automatically:
+the first `runtimes ensure` in a directory (i.e. the next `cd`) renames the
+old lock to the new name, content untouched.
 
 ## Authoring `.envrc`
 
@@ -98,7 +101,7 @@ virtualenv-flavoured `use_python`.
   `runtimes ensure` first (a milliseconds-fast no-op when the lock already
   satisfies the rc), then applies line by line: python via `use_python`, node
   via `use_node`, java via `use_java`. `watch_file` is set on both
-  `.runtimesrc` (spec edits) and `.runtimes.lock` (background install
+  `.runtimesrc` (spec edits) and `.runtimesrc.lock` (background install
   completion) — each triggers a re-evaluation at the next prompt.
 - `use_runtime <name> <spec>` — thin dispatcher to the per-runtime helper.
 - `use_python <spec>` — adds the interpreter's bin dir to `PATH`, exports
@@ -177,7 +180,7 @@ node 24
 java 25
 ```
 
-The defaults are resolved and installed **once** into `~/.runtimes.lock`
+The defaults are resolved and installed **once** into `~/.runtimesrc.lock`
 (`runtimes ensure $HOME`, kicked off by the first evaluation anywhere), so
 every directory without its own `.envrc` gets the same three runtimes on
 `PATH` — with no per-directory ceremony at all. direnv evaluates an
@@ -198,7 +201,7 @@ venv: `use_python` skips `$HOME`, and when chained it only creates
 The root itself needs a one-time `direnv allow $HOME` per machine (fresh
 blessing, after a restow, or after editing it). On the Alpine/WSL aarch64
 tier the `node 24` default can never install (the musl gap below), which
-leaves `~/.runtimes.lock` unwritten and the install retried on every
+leaves `~/.runtimesrc.lock` unwritten and the install retried on every
 `cd` — edit `~/.runtimesrc` (a symlink into the repo clone) to drop the
 node line there, or accept the retry status line.
 
@@ -215,7 +218,7 @@ node line there, or accept the retry status line.
   same `.envrc` works; an unset var is left in place with a warning.
 - Idempotent by design: evaluation re-runs on every reload, so `use_template`
   skips (a normal status, not an error) when the directory holds anything
-  besides the direnv artifacts (`.envrc`, `.runtimesrc`, `.runtimes.lock`,
+  besides the direnv artifacts (`.envrc`, `.runtimesrc`, `.runtimesrc.lock`,
   `.direnv/`). Overwriting requires `runtimes template <name> --force`.
 
 `templates/example/` ships as the proof of plumbing: a README, a `src/`
@@ -236,7 +239,7 @@ file, and a `notes.local` the manifest ignores.
   bless, after a restow, or after editing `~/.envrc`. Use
   `direnv deny` to revoke.
 - **The new runtime is installed but not applied yet**: remember direnv is
-  prompt-driven. The detached install finishing writes `.runtimes.lock`,
+  prompt-driven. The detached install finishing writes `.runtimesrc.lock`,
   and the `watch_file` on it takes effect at the **next prompt** — press
   enter once. Editing `.runtimesrc` (or any `watch_file` target) reloads the
   same way.

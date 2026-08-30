@@ -19,7 +19,7 @@ the integration — authoring `.envrc` files that call this CLI — is the
 
 `runtimes` is the CLI half of the direnv integration: it reads a project's
 `.runtimesrc`, resolves each declared runtime through its backend, and
-records the concrete result in the project's `.runtimes.lock`. Three
+records the concrete result in the project's `.runtimesrc.lock`. Three
 backends, one resolution rule each:
 
 | Runtime | Backend | Spec resolution |
@@ -34,7 +34,7 @@ a **detached** install (`nohup … &`) whose output goes to a per-project log �
 `.envrc` evaluation never blocks on the network. A pid guard
 (`~/.local/state/runtimes/pids/`) makes installs single-flight: while one
 runs, further `ensure` calls print one status line and exit 0. When the
-install finishes it writes `.runtimes.lock` atomically (temp file + rename),
+install finishes it writes `.runtimesrc.lock` atomically (temp file + rename),
 so a project never sees a half-applied environment.
 
 stdout is reserved for `path` output (machine-consumed by the direnvrc
@@ -42,7 +42,7 @@ helpers); every human-facing message goes to stderr.
 
 ### The lock file
 
-`.runtimes.lock` holds one line per runtime, recording the resolved version
+`.runtimesrc.lock` holds one line per runtime, recording the resolved version
 and the absolute store path:
 
 ```
@@ -61,6 +61,12 @@ instead of written, so the lock can never carry a path evaluation would
 reject. `.envrc` evaluation reads the lock, never the network and never
 resolution logic.
 
+The lock was previously named `.runtimes.lock`; machines blessed before the
+rename migrate automatically — `ensure` renames an old-name lock to
+`.runtimesrc.lock` (content untouched, only in directories that have a
+`.runtimesrc`) as its first act, so the migration happens on the next
+`cd` into each project. Nothing else about the format or placement changed.
+
 ### Commands
 
 - `runtimes ensure [dir]` — satisfy every runtime in `<dir>/.runtimesrc`
@@ -77,9 +83,9 @@ resolution logic.
 - `runtimes status` — list installed runtimes per backend
   (`uv python list --only-installed`, fnm `node-versions/`, sdkman
   candidates except `current`) plus the store and state paths, and the
-  project `.runtimesrc`/`.runtimes.lock` when the current directory has one.
+  project `.runtimesrc`/`.runtimesrc.lock` when the current directory has one.
 - `runtimes path <name> <spec> [dir]` — print the runtime's bin dir
-  (python, node) or `JAVA_HOME` (java) from `<dir>/.runtimes.lock` (default:
+  (python, node) or `JAVA_HOME` (java) from `<dir>/.runtimesrc.lock` (default:
   current directory); this is what the direnvrc helpers consume. Exit 1 when
   the lock has no matching entry (`<name> <spec> not satisfied in <dir>
   (run: runtimes ensure <dir>)`) or when the entry points at a path that no
@@ -134,7 +140,7 @@ resolution logic.
 
 - `.runtimesrc` — per-project runtime declarations, one `<name> <spec>` per
   line; `#` starts a comment.
-- `.runtimes.lock` — per-project resolved versions + store paths, written by
+- `.runtimesrc.lock` — per-project resolved versions + store paths, written by
   `ensure`'s detached worker.
 - `~/.local/state/runtimes/logs/<hash>.log` — output of the detached install
   for a project (`<hash>` is a hash of the project directory path:

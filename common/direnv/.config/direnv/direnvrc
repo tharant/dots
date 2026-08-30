@@ -5,11 +5,11 @@
 # stdlib's virtualenv-flavoured use_python.
 #
 # Evaluation contract: helpers only read local files (.runtimesrc,
-# .runtimes.lock) and call `runtimes ensure` / `runtimes path` — both fast,
+# .runtimesrc.lock) and call `runtimes ensure` / `runtimes path` — both fast,
 # local-only. No network, no foreground installs: DIRENV_WARN_TIMEOUT only
 # warns, it never kills, so a hung evaluation hangs every prompt. Background
-# installs write .runtimes.lock atomically on completion; `watch_file` on
-# .runtimesrc + .runtimes.lock makes direnv apply the new runtimes at the
+# installs write .runtimesrc.lock atomically on completion; `watch_file` on
+# .runtimesrc + .runtimesrc.lock makes direnv apply the new runtimes at the
 # next prompt.
 #
 # All user-facing output goes through log_status/log_error (stderr) — stdout
@@ -33,9 +33,10 @@ _runtimes_cli() {
 
 # Lock file path for the current context: use_runtimes records the directory
 # holding .runtimesrc; standalone use_python/use_node/use_java calls default
-# to $PWD.
+# to $PWD. Old-name .runtimes.lock files are migrated by `runtimes ensure`
+# (inside use_runtimes below) before any read here.
 _runtimes_lock() {
-    printf '%s\n' "${_runtimes_lock_dir:-$PWD}/.runtimes.lock"
+    printf '%s\n' "${_runtimes_lock_dir:-$PWD}/.runtimesrc.lock"
 }
 
 # Expand a leading ~ (defensive: lock paths are absolute, but a store rooted
@@ -83,7 +84,7 @@ _runtimes_valid_entry() {
     return 1
 }
 
-# Print "<resolved>" and "<path>" (two lines) from the first .runtimes.lock
+# Print "<resolved>" and "<path>" (two lines) from the first .runtimesrc.lock
 # entry matching name+spec; return 1 when the lock is missing, has no
 # matching entry, or the entry fails validation. Lock line format:
 # <name> <spec> <resolved> <path>
@@ -151,7 +152,7 @@ use_runtimes() {
     # Reload triggers: the rc itself (spec edits) and the lock (background
     # install completion) — direnv re-evaluates at the next prompt.
     watch_file "$rc"
-    watch_file "$dir/.runtimes.lock"
+    watch_file "$dir/.runtimesrc.lock"
 
     # Ensure first: milliseconds-fast when satisfied, otherwise a detached
     # install is kicked off (its status line goes to stderr) and ensure
@@ -302,7 +303,7 @@ use_java() {
 
 # use_template <name> — scaffold $PWD from a repo template via
 # `runtimes template`. Refuses when the directory holds anything besides
-# direnv artifacts (.envrc, .runtimesrc, .runtimes.lock, .direnv/): the
+# direnv artifacts (.envrc, .runtimesrc, .runtimesrc.lock, .direnv/): the
 # guard makes reloads idempotent, since evaluation re-runs on every prompt;
 # the steady-state skip after a successful expansion is a normal status,
 # not an error. Overwriting requires `runtimes template <name> --force`.
@@ -320,7 +321,9 @@ use_template() {
             continue
         fi
         case "$entry" in
-            .envrc|.runtimesrc|.runtimes.lock|.direnv) ;;
+            .envrc|.runtimesrc|.runtimesrc.lock|.runtimes.lock|.direnv) ;;
+            # .runtimes.lock: pre-rename lock name — migrated away by the
+            # next `runtimes ensure`, still allowed here meanwhile
             *) dirty="$entry"; break ;;
         esac
     done

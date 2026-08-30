@@ -9,7 +9,7 @@ set -euo pipefail
 # majors resolved via the sdkman version API — never `sdk list`, which forces
 # a pager). `ensure` is the direnv hot path: file reads only, installs run
 # detached (nohup + log + single-flight pid guard), and the project lock
-# (.runtimes.lock) is written via temp-file + rename so a project never sees a
+# (.runtimesrc.lock) is written via temp-file + rename so a project never sees a
 # half-applied environment. stdout is reserved for `path` output (consumed by
 # the direnvrc helpers); all human messaging goes to stderr. Portable: bash 3.2
 # (no arrays-as-maps, no mapfile, no case-folding), BusyBox userland; BSD has
@@ -61,7 +61,7 @@ Commands:
                              java major or exact sdkman candidate ID.
   status                     List installed runtimes per backend + store paths.
   path <name> <spec> [dir]   Print the runtime's bin dir (python, node) or
-                             JAVA_HOME (java) from <dir>/.runtimes.lock
+                             JAVA_HOME (java) from <dir>/.runtimesrc.lock
                              (default: cwd). Exit 1 when not satisfied.
   template <name> [--force] [dest]
                              Expand repo template <name> into <dest> (default:
@@ -388,6 +388,15 @@ cmd_ensure() {
     esac
     dir=$(cd "$dir" 2>/dev/null && pwd) || die "no such directory: $dir"
     [ -r "$dir/.runtimesrc" ] || exit 0
+    # One-time rename for machines blessed before the lock was renamed:
+    # .runtimes.lock -> .runtimesrc.lock. ensure is the direnv hot path, so
+    # every previously blessed project migrates on the next cd; only
+    # directories with a .runtimesrc are considered (the lock is meaningless
+    # without one). Content moves untouched — the format never changed.
+    if [ -f "$dir/.runtimes.lock" ] && [ ! -e "$dir/.runtimesrc.lock" ]; then
+        mv "$dir/.runtimes.lock" "$dir/.runtimesrc.lock"
+        info "runtimes: migrated $dir/.runtimes.lock -> $dir/.runtimesrc.lock"
+    fi
     read_runtimesrc "$dir/.runtimesrc"
     [ "$NAME_COUNT" -gt 0 ] || exit 0
 
@@ -414,7 +423,7 @@ cmd_ensure() {
     i=0
     while [ "$i" -lt "$NAME_COUNT" ]; do
         name=${NAME[$i]}; spec=${SPEC[$i]}
-        if ! lock_lookup "$name" "$spec" "$dir/.runtimes.lock"; then
+        if ! lock_lookup "$name" "$spec" "$dir/.runtimesrc.lock"; then
             missing="${missing}${name} ${spec}, "
         elif [ ! -e "$LOCK_PATH" ]; then
             missing="${missing}${name} ${spec}, "
@@ -487,16 +496,16 @@ cmd_ensure_dir() {
         warn "runtimes: install incomplete for $dir — lock not written"
         exit 1
     fi
-    LOCK_TMP="$dir/.runtimes.lock.tmp.$$"
+    LOCK_TMP="$dir/.runtimesrc.lock.tmp.$$"
     i=0
     while [ "$i" -lt "$R_COUNT" ]; do
         printf '%s %s %s %s\n' "${R_NAME[$i]}" "${R_SPEC[$i]}" "${R_RES[$i]}" "${R_PATH[$i]}" \
             >> "$LOCK_TMP"
         i=$((i + 1))
     done
-    mv "$LOCK_TMP" "$dir/.runtimes.lock"
+    mv "$LOCK_TMP" "$dir/.runtimesrc.lock"
     LOCK_TMP=""
-    info "runtimes: .runtimes.lock written for $dir"
+    info "runtimes: .runtimesrc.lock written for $dir"
 }
 
 cmd_install() {
@@ -539,8 +548,10 @@ cmd_status() {
     info "state (logs, install guards): $STATE_DIR"
     if [ -f "$PWD/.runtimesrc" ]; then
         info "project: $PWD/.runtimesrc"
-        if [ -f "$PWD/.runtimes.lock" ]; then
-            info "project lock: $PWD/.runtimes.lock"
+        if [ -f "$PWD/.runtimesrc.lock" ]; then
+            info "project lock: $PWD/.runtimesrc.lock"
+        elif [ -f "$PWD/.runtimes.lock" ]; then
+            info "project lock: $PWD/.runtimes.lock (old name — run: runtimes ensure $PWD)"
         else
             info "project lock: none yet (run: runtimes ensure $PWD)"
         fi
@@ -554,7 +565,7 @@ cmd_path() {
     fi
     name=$1; spec=$2
     if [ "$#" -eq 3 ]; then dir=$3; fi
-    lock_lookup "$name" "$spec" "$dir/.runtimes.lock" \
+    lock_lookup "$name" "$spec" "$dir/.runtimesrc.lock" \
         || die "$name $spec not satisfied in $dir (run: runtimes ensure $dir)"
     [ -e "$LOCK_PATH" ] || die "$name $spec lock entry points at missing path: $LOCK_PATH"
     case $name in
