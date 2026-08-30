@@ -342,7 +342,7 @@ _trueline_working_dir_segment() {
         fi
         local curr="${p##*/}"
         p="${p%/*}"
-        local path_="${p//\//$wd_separator}$wd_separator$curr"
+        local path_="${p//\//$wd_separator}$wd_separator$curr "
         if [[ "${p:0:1}" = '/' ]]; then
             path_="/$path_"
         fi
