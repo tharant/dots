@@ -1,4 +1,4 @@
-.TH DOTS-SETUP 1 "2026-08-28" "dots" "User Commands"
+.TH DOTS-SETUP 1 "2026-08-29" "dots" "User Commands"
 .SH NAME
 dots\-setup \- bootstrap and manage the dots dotfiles deployment
 .SH SYNOPSIS
@@ -154,6 +154,21 @@ and generation of the
 .B en_US.UTF\-8
 locale via
 .BR locale\-gen .
+.B locale\-gen
+is resolved through
+.B PATH
+with
+.I /usr/sbin/locale\-gen
+as an absolute\-path fallback, because
+.I /usr/sbin
+is not always on
+.B PATH
+(OrbStack syncs the Mac's PATH into its machines; non\-login shells) even
+when the
+.B locales
+package is installed; if neither is found, or
+.I /etc/locale.gen
+is missing, the step is skipped with a recorded failure.
 .TP
 .B Linux (other)
 Installs git, age, stow, just, tmux, shellcheck, bash, coreutils, direnv,
@@ -239,6 +254,30 @@ on Alpine and
 under WSL (layers whose directory does not exist are skipped silently).
 A package that fails to stow is recorded as a non\-fatal failure and the
 remaining packages continue.
+.PP
+Before each package is stowed (in the full,
+.B \-\-force
+and
+.B \-\-restow
+runs, but not
+.B \-\-adopt
+or
+.BR \-\-unstow ),
+any plain regular file sitting at one of the package's target paths is moved
+aside into
+.IR ~/.dots\-backup\-<timestamp>/ ,
+preserving its path relative to
+.IR $HOME ,
+so a fresh distro's
+.I /etc/skel
+defaults (Debian seeds
+.I ~/.bashrc
+and
+.IR ~/.bash_logout )
+no longer abort the whole package. Symlinks and directories are never moved;
+those remain conflicts stow is right to refuse. Nothing is deleted: each move
+is reported as it happens and the backup directory is named in a summary line
+when anything was backed up.
 .SH OPTIONS
 .TP
 .B \-\-restow
@@ -387,6 +426,12 @@ script kept going.
 .TP
 .I $HOME/.dots
 Default repository location.
+.TP
+.I ~/.dots\-backup\-<timestamp>
+Pre\-existing
+.I $HOME
+files moved aside to unblock stowing (full, \-\-force and \-\-restow runs);
+restore by hand if needed.
 .TP
 .I /etc/os-release
 Read to identify the Linux distribution.

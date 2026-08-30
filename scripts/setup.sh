@@ -521,8 +521,16 @@ install_debian_extra() {
 }
 
 install_utf8_locale() {
-    # Enable en_US.UTF-8 non-interactively right after installing locales
-    if ! command_exists locale-gen; then
+    # Enable en_US.UTF-8 non-interactively right after installing locales.
+    # locale-gen lives in /usr/sbin, which is not always on PATH (OrbStack
+    # syncs the Mac's PATH into its machines; non-login shells) — so resolve
+    # it by absolute path as a fallback before declaring it missing.
+    local locale_gen
+    locale_gen="$(command -v locale-gen || true)"
+    if [[ -z "$locale_gen" && -x /usr/sbin/locale-gen ]]; then
+        locale_gen=/usr/sbin/locale-gen
+    fi
+    if [[ -z "$locale_gen" ]]; then
         warn "locale-gen not available — skipping en_US.UTF-8 generation"
         FAILURES+=("locales: locale-gen missing")
         return 0
@@ -544,7 +552,7 @@ install_utf8_locale() {
     else
         echo 'en_US.UTF-8 UTF-8' | run_priv tee -a /etc/locale.gen >/dev/null
     fi
-    run_priv locale-gen || {
+    run_priv "$locale_gen" || {
         warn "locale-gen failed — set LANG manually if the shell looks broken"
         FAILURES+=("locales: en_US.UTF-8")
     }
@@ -911,6 +919,34 @@ decrypt_secrets() {
 
 # --- Stow dotfiles ---
 
+STOW_BACKUP_DIR=""
+
+backup_stow_conflicts() {
+    # backup_stow_conflicts <pkg_dir> — before stowing, move any plain regular
+    # file sitting at one of the package's target paths into
+    # ~/.dots-backup-<timestamp>/, so a fresh distro's /etc/skel defaults
+    # (Debian's ~/.bashrc, ~/.bash_logout, ...) do not abort the whole package.
+    # Symlinks and directories are left alone: those are conflicts stow is
+    # right to refuse. Nothing is deleted — the backup can be restored by hand.
+    local pkg_dir="$1"
+    local rel rel_dir target
+
+    while IFS= read -r -d '' rel; do
+        rel="${rel#./}"
+        target="$HOME/$rel"
+        if [[ -f "$target" && ! -L "$target" ]]; then
+            if [[ -z "$STOW_BACKUP_DIR" ]]; then
+                STOW_BACKUP_DIR="$HOME/.dots-backup-$(date +%Y%m%d%H%M%S)"
+            fi
+            rel_dir="${rel%/*}"
+            [[ "$rel_dir" == "$rel" ]] && rel_dir="."
+            mkdir -p "$STOW_BACKUP_DIR/$rel_dir"
+            mv "$target" "$STOW_BACKUP_DIR/$rel"
+            info "  Moved pre-existing ~/$rel -> ~${STOW_BACKUP_DIR#"$HOME"}/$rel"
+        fi
+    done < <(cd "$pkg_dir" && find . -mindepth 1 \( -type f -o -type d \) -print0)
+}
+
 stow_one_dir() {
     local base_dir="$1"
     local label="$2"
@@ -926,6 +962,9 @@ stow_one_dir() {
         fi
         pkg_name="$(basename "$pkg")"
         info "  $action_msg $pkg_name"
+        if [[ "$STOW_BACKUP" == "true" ]]; then
+            backup_stow_conflicts "$pkg"
+        fi
         if ! stow -d "$base_dir" -t "$HOME" --no-folding "${STOW_FLAGS[@]}" "$pkg_name"; then
             warn "Failed to stow $pkg_name — continuing with remaining packages"
             FAILURES+=("stow: $pkg_name")
@@ -935,12 +974,13 @@ stow_one_dir() {
 
 stow_packages() {
     STOW_FLAGS=("--no-folding")
+    STOW_BACKUP="true"
     local action_msg="Stowing"
 
     case "${1:-}" in
         --restow) STOW_FLAGS+=("--restow"); action_msg="Re-stowing" ;;
-        --adopt)  STOW_FLAGS+=("--adopt");  action_msg="Adopting + stowing" ;;
-        --unstow) STOW_FLAGS=("--no-folding" "--delete"); action_msg="Unstowing" ;;
+        --adopt)  STOW_FLAGS+=("--adopt");  action_msg="Adopting + stowing"; STOW_BACKUP="false" ;;
+        --unstow) STOW_FLAGS=("--no-folding" "--delete"); action_msg="Unstowing"; STOW_BACKUP="false" ;;
     esac
 
     stow_one_dir "$DOTS_DIR/common" "common" "$action_msg"
@@ -951,6 +991,9 @@ stow_packages() {
     fi
     if [[ "$ENV" == "wsl" ]]; then
         stow_one_dir "$DOTS_DIR/wsl" "wsl" "$action_msg"
+    fi
+    if [[ -n "$STOW_BACKUP_DIR" ]]; then
+        info "Pre-existing files were backed up to $STOW_BACKUP_DIR"
     fi
 }
 
