@@ -119,7 +119,8 @@ iter_host_layers() {
 }
 
 require_repo() {
-    [ -d "$REPO_ROOT/.git" ] \
+    # .git is a directory in a normal clone and a gitfile in a linked worktree
+    { [ -d "$REPO_ROOT/.git" ] || [ -f "$REPO_ROOT/.git" ]; } \
         || die "not a git checkout: $REPO_ROOT (dots must run from a clone of the dots repo)"
     [ -f "$REPO_ROOT/scripts/setup.sh" ] \
         || die "scripts/setup.sh missing from $REPO_ROOT — incomplete checkout"

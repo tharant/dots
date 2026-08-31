@@ -57,6 +57,10 @@ man-uninstall:
 runtimes *CMD:
   ./common/bin/bin/runtimes {{ CMD }}
 
+# Pass a subcommand through to the packages CLI (just packages status)
+packages *CMD:
+  ./common/bin/bin/packages {{ CMD }}
+
 # Pass a subcommand through to the dots CLI (just dots commit)
 dots *CMD:
   ./common/bin/bin/dots {{ CMD }}

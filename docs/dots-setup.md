@@ -8,7 +8,8 @@
 
 ```
 dots-setup [--restow|--adopt|--unstow|--force|--verify|-h|--help]
-dots-setup            # no args: full bootstrap (install deps, clone, decrypt, stow)
+dots-setup            # no args: full bootstrap (install deps, clone, decrypt, stow,
+                      #   seed ~/.packages)
 ```
 
 ## Description
@@ -25,6 +26,8 @@ fleet. With no arguments it runs the full pipeline, in this order:
 4. Decrypt secrets by invoking `scripts/decrypt.sh` (see
    [dots-decrypt](dots-decrypt.md)), passing the current `FORCE` value.
 5. Stow every package into `$HOME`.
+6. Seed `~/.packages` from the repo template, if the machine has no wishlist
+   yet (see the [packages](packages.md) shim).
 
 The script is written to be piped straight from `curl` into `bash` on a fresh
 machine. When stdin is a pipe it reattaches stdin to `/dev/tty` (guarded by a
@@ -160,6 +163,13 @@ are never moved; those remain conflicts stow is right to refuse. Nothing is
 deleted — each move is reported as it happens and the backup directory is
 named in a summary line when anything was backed up.
 
+Finally, the package wishlist `~/.packages` is seeded from
+`templates/packages/.packages` when the machine does not have one yet — a
+minimal baseline (the tools this run guarantees), never overwritten once it
+exists. The user owns the file from there: remove
+[`#` comments](packages.md) and run `packages update` to add packages; the
+full run never installs anything from the wishlist itself.
+
 ## Options
 
 | Flag | Effect |
@@ -240,6 +250,8 @@ options.` and exits 1. A run can print plenty of WARNING lines and still exit
 - `~/.local/bin/uv`, `~/.local/bin/fnm` — runtime-manager installs (macOS/Linux/WSL).
 - `~/.sdkman/` — sdkman install, with `sdkman_auto_answer=true` in `etc/config`.
 - `/usr/local/bin/just`, `/usr/local/lib/nodejs/` — static just / Node.js fallbacks (Debian).
+- `~/.packages` — seeded from `templates/packages/.packages` in the full
+  and `--force` runs when absent; the [packages](packages.md) wishlist.
 - `scripts/decrypt.sh`, `scripts/verify.sh` — invoked for the decrypt and verify steps.
 - `.githooks/` — set as `core.hooksPath` after clone or pull.
 

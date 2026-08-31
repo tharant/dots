@@ -42,7 +42,7 @@ Detection: `uname -s` (platform), `/etc/os-release` (distro), `/proc/version` + 
 dots/
 ├── common/            # Cross-platform configs (Stow packages)
 │   ├── bash/          # .bashrc, .bash_aliases, .bash_functions, ...
-│   ├── bin/           # ~/bin shims: loadavg, tmux-copy, runtimes (capability-detecting)
+│   ├── bin/           # ~/bin shims: loadavg, tmux-copy, runtimes, packages (capability-detecting)
 │   ├── direnv/        # .config/direnv (direnvrc use_* helpers, direnv.toml), ~/.envrc root + ~/.runtimesrc defaults
 │   ├── git/           # .gitconfig, .gitignore_global
 │   ├── nvim/          # .config/nvim/init.lua (coc.nvim, clipboard-guarded)
@@ -61,7 +61,8 @@ dots/
 ├── bsd/               # BSD overrides    → .bashrc.platform.d/bsd.sh
 ├── secrets/           # Encrypted files (dual artifacts: *.age + *.phrase.age)
 ├── scripts/           # setup.sh, encrypt.sh, decrypt.sh, verify.sh
-└── templates/         # use_template scaffolding trees + manifests (repo root, not stowed)
+└── templates/         # use_template scaffolding trees + manifests + the ~/.packages
+                       # wishlist template (repo root, not stowed)
 ```
 
 Each subdirectory inside `common/` and the platform dirs is a Stow package. Files mirror `$HOME` — e.g., `common/bash/.bashrc` becomes `~/.bashrc`.
@@ -102,6 +103,7 @@ agreement with the code they document:
 | [loadavg(1)](docs/loadavg.md) | `~/bin/loadavg` — status-bar load shim (`common/bin`) |
 | [tmux-copy(1)](docs/tmux-copy.md) | `~/bin/tmux-copy` — clipboard ladder + OSC 52 (`common/bin`) |
 | [runtimes(1)](docs/runtimes.md) | `~/bin/runtimes` — managed runtimes CLI: uv/fnm/sdkman (`common/bin`) |
+| [packages(1)](docs/packages.md) | `~/bin/packages` — package wishlist CLI: resolve + install `~/.packages` across apt/apk/dnf/pacman/pkg/brew (`common/bin`) |
 | [dots(1)](docs/dots.md) | `~/bin/dots` — repo orchestration CLI: delegates every op, plus composed `sync` and gated interactive `commit` (never pushes) (`common/bin`) |
 
 Install them as real manpages (see [docs/man/Makefile](docs/man/Makefile)):

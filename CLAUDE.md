@@ -14,7 +14,8 @@ Central dotfiles repository for bash across macOS, Debian flavors, Alpine, WSL2,
 dots/
 ├── common/          # Shared configs across all platforms (GNU Stow packages)
 │   ├── bash/        # .bashrc (with .bashrc.platform.d hook), aliases, functions, ...
-│   ├── bin/         # ~/bin shims: loadavg(1), tmux-copy(1), runtimes(1), dots(1)
+│   ├── bin/         # ~/bin shims: loadavg(1), tmux-copy(1), runtimes(1), dots(1),
+│   │                #   packages(1)
 │   │                #   (portable, one file for all; documented in docs/)
 │   ├── direnv/      # .config/direnv (direnvrc use_* helpers, direnv.toml),
 │   │                #   active ~/.envrc tree root + ~/.runtimesrc defaults
@@ -37,7 +38,8 @@ dots/
 │   ├── recipients.txt  # age public key(s) for encryption (public, safe to commit)
 │   ├── ssh/         # Encrypted SSH private keys
 │   └── tokens/      # Encrypted API tokens, credentials
-├── templates/       # use_template scaffolding trees + manifests (repo root,
+├── templates/       # use_template scaffolding trees + manifests + the ~/.packages
+                     #   wishlist template (repo root,
 │                    #   not stowed)
 ├── scripts/
 │   ├── setup.sh     # Bootstrap (curl-able): pkg_install dispatcher, platform/distro/env
@@ -114,6 +116,7 @@ just decrypt                  # Decrypt all secrets
 just man-check                # mandoc -T lint the docs/man pages
 just man-install / man-uninstall  # Manage manpage symlinks in ~/.local/share/man
 just runtimes <cmd>            # Pass a subcommand to the runtimes CLI (uv/fnm/sdkman)
+just packages <cmd>            # Pass a subcommand to the packages CLI (~/.packages wishlist)
 just dots <cmd>                 # Pass a subcommand to the dots CLI (also usable as ~/bin/dots)
 
 # The dots CLI (~/bin/dots, docs/dots.md) delegates every op above 1:1 to
@@ -155,8 +158,8 @@ message must match the implementation; run `just man-check` (mandoc lint
 over all pages) and fix any doc drift. The [README](README.md)
 Documentation table must list every page/script pair. Currently documented:
 `dots-setup`, `dots-encrypt`, `dots-decrypt`, `dots-verify`, `loadavg`,
-`tmux-copy`, `runtimes`, `dots` (the direnv feature guide,
-`docs/direnv-runtimes.md`, accompanies it). Config files sourced by
+`tmux-copy`, `runtimes`, `packages`, `dots` (the direnv feature guide,
+`docs/direnv-runtimes.md`, accompanies `runtimes`). Config files sourced by
 third-party programs (e.g.
 `common/tmux-powerline/.config/tmux-powerline/{config.sh,themes/dots.sh}`)
 are configuration, not scripts — no manpage pair; they're covered by the

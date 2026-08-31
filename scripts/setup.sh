@@ -1005,6 +1005,33 @@ install_tmux_powerline() {
     fi
 }
 
+# --- Package wishlist ---
+
+seed_packages() {
+    # Seed ~/.packages (the packages shim's wishlist) from the repo template
+    # on a machine that has none: fresh installs start from the minimal
+    # baseline recorded in templates/packages/.packages. The user owns the
+    # file from then on — never overwritten, not on re-runs either (`packages
+    # init` does the same thing by hand). Non-fatal on failure.
+    local tmpl="$DOTS_DIR/templates/packages/.packages"
+    if [[ -e "$HOME/.packages" ]]; then
+        info "$HOME/.packages already present — leaving it untouched"
+        return 0
+    fi
+    if [[ ! -f "$tmpl" ]]; then
+        warn "wishlist template missing at $tmpl — ~/.packages will not be seeded"
+        FAILURES+=("packages: template missing")
+        return 0
+    fi
+    if cp "$tmpl" "$HOME/.packages"; then
+        info "Seeded ~/.packages (the packages wishlist)"
+        info "Grow it with: echo <name> >> ~/.packages && packages update"
+    else
+        warn "Could not seed ~/.packages"
+        FAILURES+=("packages: seed")
+    fi
+}
+
 # --- Decrypt secrets ---
 
 decrypt_secrets() {
@@ -1148,6 +1175,7 @@ main() {
             install_tmux_powerline
             decrypt_secrets
             stow_packages
+            seed_packages
             ;;
         "")
             require_priv
@@ -1157,6 +1185,7 @@ main() {
             install_tmux_powerline
             decrypt_secrets
             stow_packages
+            seed_packages
             ;;
         *)
             error "Unknown option: $1 (see --help)"
