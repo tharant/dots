@@ -102,7 +102,7 @@ managing that package.
 | --- | --- |
 | 0 | Converged, or status completed. |
 | 1 | Usage error, or a malformed wishlist entry (two names, bad pin). |
-| 2 | Finished with one or more entries unresolved or install failures; also bare usage (no arguments). |
+| 2 | Finished with one or more entries unresolved or install failures. |
 
 ## Files
 

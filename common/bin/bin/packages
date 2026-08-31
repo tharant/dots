@@ -795,7 +795,7 @@ wishlist_template() {
 main() {
     case "${1:-}" in
         -h|--help) usage 0 ;;
-        "")        usage 2 ;;
+        "")        usage 0 ;;
         update)    shift; cmd_update ;;
         status)    cmd_status ;;
         add)       shift; cmd_add "$@" ;;
