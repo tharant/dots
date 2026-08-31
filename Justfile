@@ -57,6 +57,10 @@ man-uninstall:
 runtimes *CMD:
   ./common/bin/bin/runtimes {{ CMD }}
 
+# Pass a subcommand through to the packages CLI (just packages status)
+packages *CMD:
+  ./common/bin/bin/packages {{ CMD }}
+
 # --- Dev ---
 
 # Run shellcheck on all shell scripts, bash dotfiles, and extensionless shims

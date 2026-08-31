@@ -7,7 +7,8 @@ dots\-setup \- bootstrap and manage the dots dotfiles deployment
 .PP
 .B dots\-setup
 .br
-(no arguments: full bootstrap \-\- install dependencies, clone, decrypt, stow)
+(no arguments: full bootstrap \-\- install dependencies, clone, decrypt,
+stow, seed the package wishlist)
 .SH DESCRIPTION
 .B dots\-setup
 bootstraps the dots dotfiles repository on a new machine and manages an
@@ -298,6 +299,19 @@ no longer abort the whole package. Symlinks and directories are never moved;
 those remain conflicts stow is right to refuse. Nothing is deleted: each move
 is reported as it happens and the backup directory is named in a summary line
 when anything was backed up.
+.PP
+Finally, the package wishlist
+.I ~/.packages
+is seeded from
+.I $DOTS_DIR/templates/packages/.packages
+when the machine does not have one yet \- a minimal baseline (the tools this
+run guarantees), never overwritten once it exists. The user owns the file
+from there: remove
+.B #
+comments and run
+.B "packages update"
+to add packages; the full run never installs anything from the wishlist
+itself.
 .SH OPTIONS
 .TP
 .B \-\-restow
@@ -495,6 +509,16 @@ set in
 Static just and Node.js fallback locations (Debian only); the extraction
 directory is created by the script when missing.
 .TP
+.I ~/.packages
+Seeded from
+.I $DOTS_DIR/templates/packages/.packages
+in the full and
+.B \-\-force
+runs when absent; the
+.B packages
+shim's wishlist (see
+.BR packages (1)).
+.TP
 .I $DOTS_DIR/scripts/decrypt.sh ", " $DOTS_DIR/scripts/verify.sh
 Invoked for the decrypt and verify steps.
 .TP
@@ -568,4 +592,5 @@ This page, not that text, is authoritative.
 .BR dots\-encrypt (1),
 .BR dots\-decrypt (1),
 .BR dots\-verify (1),
+.BR packages (1),
 .BR stow (1)

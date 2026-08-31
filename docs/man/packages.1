@@ -1,0 +1,215 @@
+.TH PACKAGES 1 "2026-08-30" "dots" "User Commands"
+.SH NAME
+packages \- resolve and install the ~/.packages wishlist across package managers
+.SH SYNOPSIS
+.B packages
+.RI < command " [" args ]
+.SH DESCRIPTION
+.B packages
+maintains a per-machine package wishlist at
+.IR ~/.packages .
+The file is seeded by
+.BR dots\-setup (1)
+from
+.I $DOTS_DIR/templates/packages/.packages
+on first install and never overwritten again; it records both the baseline
+the bootstrap guarantees and every package deliberately added since. The
+shim resolves each wishlist entry against whatever package managers are
+actually installed and installs what is missing, so a fresh machine
+converges from a list of names with no per-platform bookkeeping.
+.PP
+It is deployed as
+.I ~/bin/packages
+by
+.BR dots\-setup (1)
+from
+.IR common/bin/bin/packages .
+.SH COMMANDS
+.TP
+.B update
+Satisfy every wishlist entry: refresh backend index caches, skip entries
+already installed or provided by setup, and resolve + install the rest.
+Entries that match no backend exactly are resolved once interactively (see
+.BR RESOLUTION ).
+.TP
+.B status
+Report each entry's state \-\- provided, installed, resolved (a cached
+choice still to install), not here (pins exclude every available backend),
+or no match. Read-only: no installs, no prompts. Always exits 0.
+.TP
+.BI add " name" \ [ @mgr:pkg " ...]"
+Append an entry to
+.I ~/.packages
+and install it. An entry already named in the wishlist is reported and
+not re-added; installing the existing list is left to
+.BR update .
+.TP
+.BI init " [template]"
+Seed
+.I ~/.packages
+from a template file \- by default
+.I templates/packages/.packages
+in the checkout this shim was deployed from (or
+.IR $DOTS_DIR ).
+Refuses to overwrite an existing wishlist.
+.SH WISHLIST FORMAT
+One entry per line; blank lines and comments (a line starting with
+.BR # )
+are ignored, as is anything after an inline
+.BR # .
+An entry is one or more whitespace-separated tokens:
+.TP
+.I name
+Try the exact name on every backend, in priority order.
+.TP
+.IB name " @mgr: a,b"
+On backend
+.I mgr
+try
+.IR a ,
+then
+.IR b ;
+unlisted backends still try the bare name.
+.TP
+.IB name " @mgr:\-"
+Never resolve this entry on backend
+.IR mgr .
+.PP
+The first backend offering an exact match (or a pinned alternative) wins.
+.SH BACKENDS
+Checked in this order; the first available one wins. macOS is brew-only;
+on Linux and BSD Homebrew is consulted after the system package manager
+(Linuxbrew).
+.TP
+.B apt
+apt-get installs, apt-cache lookups; the index is refreshed
+.RI ( "apt-get update" )
+before the first resolution.
+.TP
+.B apk
+.B apk add/update .
+.TP
+.B dnf
+Lookups run from the local cache
+.RI ( \-\-cacheonly );
+distributions refresh their own metadata.
+.TP
+.B pacman
+.B "pacman \-S \-\-needed \-\-noconfirm"
+installs; the sync database is refreshed
+.RB ( \-Sy )
+before the first resolution.
+.TP
+.B pkg
+FreeBSD
+.BR pkg .
+.TP
+.B brew
+Homebrew formulas and casks. Brew is intended to run as the user, never
+through the privilege prefix.
+.PP
+Privileged installs run under
+.B sudo
+or
+.B doas
+(plainly as root); with neither available, system-package installs fail
+with a warning and the run exits 2.
+.SH PROVIDED BASELINE
+The names
+.BR age ", " bash ", " bc ", " coreutils ", " curl ", " direnv ", " fnm ", " git ", " just ", " jq ", " locales ", " less ", " sdkman ", " shellcheck ", " stow ", " tmux ", " uv
+and
+.B xz-utils
+are installed (or equivalent) by
+.BR dots\-setup (1).
+Wishlist entries with these names are recorded but never resolved or
+installed \- silently skipped, so
+.BR update 's
+output stays about what the user actually wants. Keep them in the file: the
+wishlist doubles as the auditable record of what a machine's bootstrap
+provides.
+.SH RESOLUTION
+An entry that no backend matches exactly is offered its search candidates
+(bounded per backend and in total) from the non-excluded backends. The
+prompt accepts a candidate number to install,
+.B s
+to record a permanent skip for this machine, or
+.B Enter
+to leave the entry unresolved for now. Decisions are stored one per line
+(name<TAB>backend<TAB>package; backend
+.B \-
+is a skip record) and applied silently on later runs, so a machine asks at
+most once per name. Exact matches are deterministic and never cached.
+.PP
+The shim never removes anything: a wishlist line deleted only stops being
+managed. There is no pruning and no uninstall path.
+.SH ENVIRONMENT
+.TP
+.B DOTS_DIR
+Repository location used to find the wishlist template (default
+.IR ~/.dots ).
+.TP
+.B PACKAGES_FILE
+Overrides the wishlist path (default
+.IR ~/.packages ).
+.TP
+.B PACKAGES_STATE_DIR
+Overrides the state directory holding the resolution cache (default
+.IR ~/.local/state/packages ).
+.SH EXIT STATUS
+.TP
+.B 0
+Update/add converged, or status completed.
+.TP
+.B 1
+Usage error or bad wishlist syntax (e.g. two names in one entry).
+.TP
+.B 2
+Completed, but one or more entries are unresolved or failed to install;
+also printed when run with no arguments (usage).
+.SH FILES
+.TP
+.I ~/.packages
+The wishlist (seeded by
+.BR dots\-setup (1)).
+.TP
+.I ~/.local/state/packages/resolutions
+Cached resolutions and skip records.
+.TP
+.I ~/bin/packages
+The deployed shim
+.RI ( common/bin/bin/packages
+in the repository).
+.TP
+.I ~/.dots/templates/packages/.packages
+The wishlist template.
+.SH EXAMPLES
+Converge a fresh machine after editing the wishlist:
+.PP
+.RS
+.nf
+echo -en "htop\\nhttpie\\nmariadb10\\n" >> ~/.packages
+packages update
+.fi
+.RE
+.PP
+Pin per-platform spellings so a machine is never asked:
+.PP
+.RS
+.nf
+build-essential @apt:build-essential @apk:build-base @dnf:gcc-c++,make @brew:-
+postgresql18 @18
+.fi
+.RE
+.PP
+Inspect before installing:
+.PP
+.RS
+.nf
+packages status
+.RE
+.SH SEE ALSO
+.BR dots\-setup (1),
+.BR runtimes (1),
+.BR stow (1),
+.BR brew (1),
+.BR apt (8)

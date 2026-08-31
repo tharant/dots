@@ -1,0 +1,44 @@
+# ~/.packages — this machine's package wishlist, maintained by the packages
+# shim (just packages <cmd>, or ~/bin/packages). Seeded by dots-setup from
+# the dots repo (templates/packages/.packages) on first install; this copy is
+# yours to edit freely.
+#
+#   - one entry per line; '#' comments and blank lines are ignored
+#     (a trailing '# note' comment is fine too)
+#   - `packages update` resolves each entry against the package managers
+#     available on this machine (apt, apk, dnf, pacman, pkg, brew) and
+#     installs what is missing
+#   - `packages status` shows what resolved, what is installed, and what
+#     needs attention — run it after editing
+#   - removing a line stops managing that package; it never uninstalls it
+#
+# The un-commented entries below are the baseline dots-setup guarantees —
+# leave them in place: they are silently skipped (never installed twice, and
+# the list doubles as a record of what the bootstrap provides on any machine).
+#
+# Syntax: NAME [@mgr:pkg ...]
+#   htop                    try the exact name on every backend
+#   postgresql18 @brew:postgresql@18
+#                           install postgresql@18 specifically on brew
+#   build-essential @apt:build-essential @apk:build-base @brew:-
+#                           per-backend names; '-' excludes a backend
+#
+# Examples to uncomment when a machine needs them:
+#postgresql18 @brew:postgresql@18
+#build-essential @apt:build-essential @apk:build-base @dnf:gcc-c++,make @brew:-
+#debian-desktop @apt:task-gnome-desktop @apk:- @dnf:- @pacman:- @brew:-
+
+bash
+bc
+coreutils
+curl
+git
+jq
+just
+stow
+tmux
+age
+direnv
+shellcheck
+uv
+sdkman
