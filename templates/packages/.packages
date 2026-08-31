@@ -5,12 +5,14 @@
 #
 #   - one entry per line; '#' comments and blank lines are ignored
 #     (a trailing '# note' comment is fine too)
-#   - `packages update` resolves each entry against the package managers
+#   - `packages install` resolves each entry against the package managers
 #     available on this machine (apt, apk, dnf, pacman, pkg, brew) and
-#     installs what is missing
+#     installs what is missing; `packages update` does that plus an index
+#     refresh + cleanup
 #   - `packages status` shows what resolved, what is installed, and what
 #     needs attention — run it after editing
-#   - removing a line stops managing that package; it never uninstalls it
+#   - removing a line, then `packages refresh`, uninstalls packages this
+#     tool itself installed; hand-installed packages are never touched
 #
 # The un-commented entries below are the baseline dots-setup guarantees —
 # leave them in place: they are silently skipped (never installed twice, and

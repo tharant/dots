@@ -48,6 +48,7 @@ options and diagnostics are those of the target script.
 | `decrypt` | `scripts/decrypt.sh` | [dots-decrypt(1)](dots-decrypt.md) |
 | `status` | stow dry-run, host's stow layers only | other platforms' packages are skipped — they collide by design with what is stowed here (e.g. `.bash_profile`), so probing them is always noise |
 | `list-packages` | — | prints `base/pkg` lines; mirrors `just list-packages` |
+| `packages <cmd>` | `common/bin/bin/packages <cmd>` | passthrough to the wishlist CLI (`status` / `install` / `update` / `refresh` / `add`); see [packages(1)](packages.md) |
 | `man-check` / `man-install` / `man-uninstall` | `make -C docs/man <target>` | |
 | `sync` | composed (below) | pull → restow → verify |
 | `commit [-m <msg>]` | composed (below) | survey → plan → review → commit; **never pushes** |
@@ -145,6 +146,8 @@ summary is printed and a reminder that nothing was pushed.
   `scripts/decrypt.sh` — the delegation targets
   ([dots-setup(1)](dots-setup.md), [dots-verify(1)](dots-verify.md),
   [dots-encrypt(1)](dots-encrypt.md), [dots-decrypt(1)](dots-decrypt.md)).
+- `common/bin/bin/packages` — the [packages(1)](packages.md) passthrough
+  target.
 
 ## Intended usage
 
@@ -194,3 +197,5 @@ Through `just`:
 just dots commit
 just dots sync
 ```
+Related: [packages(1)](packages.md) (the wishlist CLI behind
+`dots packages <cmd>`) · [runtimes(1)](runtimes.md)

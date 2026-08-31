@@ -122,6 +122,18 @@ Prints every stow package as
 (mirrors
 .BR "just list-packages" ).
 .TP
+.BI packages " <cmd>"
+Passthrough to the wishlist CLI
+.RB ( packages ( 1 )) \(em
+.B status ,
+.B install ,
+.BR update ,
+.B refresh ,
+.B add \(em
+exec'd from the checkout
+.B dots
+was resolved from.
+.TP
 .B man-check | man-install | man-uninstall
 .B make -C docs/man
 with the same target; see
@@ -325,6 +337,12 @@ The delegation targets; see
 .BR dots-verify (1),
 .BR dots-encrypt (1),
 .BR dots-decrypt (1).
+.TP
+.I common/bin/bin/packages
+The target of the
+.B packages
+passthrough; see
+.BR packages (1).
 .SH DIAGNOSTICS
 All
 .B dots
@@ -393,5 +411,6 @@ just dots sync
 .BR dots-decrypt (1),
 .BR dots-verify (1),
 .BR runtimes (1),
+.BR packages (1),
 .BR stow (1),
 .BR just (1)

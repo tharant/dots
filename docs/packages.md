@@ -28,18 +28,25 @@ machine (apt, apk, dnf, pacman, pkg, brew) and installs what is missing.
 The point is a single plain-text source of truth per machine: a fresh
 machine converges from a list of names with no per-platform bookkeeping,
 and the file doubles as an (unordered) history of what the machine has
-installed and what its bootstrap guarantees. There is deliberately **no
-pruning**: deleting a line stops *managing* that package; it never
-uninstalls it.
+installed and what its bootstrap guarantees. Removals are possible but
+**journaled**: every package this shim installs is recorded in
+`~/.local/state/packages/installed`, and only journaled packages are ever
+uninstalled (by `packages refresh`, prompted per name). A package you
+installed by hand is never touched — deleting its line only stops
+*managing* it.
 
-Deployed as `~/bin/packages` by dots-setup from `common/bin/bin/packages`.
+Deployed as `~/bin/packages` by dots-setup from `common/bin/bin/packages`;
+also reachable as `dots packages <cmd>` (see [dots](dots.md)) and
+`just packages <cmd>`.
 
 ## Commands
 
 | Command | Meaning |
 | --- | --- |
-| `update` | Satisfy the whole wishlist: refresh index caches, skip installed/provided entries, resolve + install the rest. Unmatched entries are resolved once interactively (see below). |
-| `status` | Report each entry's state (provided / installed / resolved / not here / no match). Read-only — no installs, no prompts. |
+| `status` | Report each entry's state (provided / installed / resolved / not here / no match). Read-only — no installs, no prompts, no writes. |
+| `install` | Resolve + install every wishlist entry that is not installed yet. No index refresh, no cleanup. |
+| `update` | `install`, plus refresh the backend indexes first (`apt-get update`, `brew update`, …) and clean them after (`brew cleanup`, `apt-get autoremove`, …). The full convergence. |
+| `refresh` | Apply wishlist edits in both directions: uninstall journaled installs that are no longer in the file (prompted y/n), then `install`. Hand-installed packages are never touched. |
 | `add <name> [@mgr:pkg ...]` | Append an entry to `~/.packages` and install it; an entry already in the wishlist is reported, not re-added. |
 | `init [template]` | Seed `~/.packages` from the repo template; refuses to overwrite. |
 | `-h`, `--help` | Usage. |
@@ -85,8 +92,15 @@ thereafter — a machine is asked at most once per name. Exact matches are
 deterministic and are not cached. Prompts read stdin, falling back to
 `/dev/tty`, so an update under `curl | bash` still prompts.
 
-The shim has **no uninstall path**: removing a wishlist line only stops
-managing that package.
+### The install journal
+
+`install`, `update`, `add` and `refresh` append every package **this shim**
+installs to `~/.local/state/packages/installed` (one line per name:
+`name⇥backend⇥package`). [refresh](#-commands) is the only uninstall path
+and reads only this file: when a journaled package is no longer an entry in
+`~/.packages`, refresh offers to remove it (y per package, anything else
+keeps it; with no terminal everything is kept and listed). Delete a journal
+line and the machine forgets the package was ever shim-managed.
 
 ## Environment
 
@@ -94,7 +108,7 @@ managing that package.
 | --- | --- | --- |
 | `DOTS_DIR` | Where to find the wishlist template | `~/.dots` |
 | `PACKAGES_FILE` | Wishlist path override | `~/.packages` |
-| `PACKAGES_STATE_DIR` | State (resolution cache) directory | `~/.local/state/packages` |
+| `PACKAGES_STATE_DIR` | State directory (resolution cache + install journal) | `~/.local/state/packages` |
 
 ## Exit status
 
@@ -102,13 +116,15 @@ managing that package.
 | --- | --- |
 | 0 | Converged, or status completed. |
 | 1 | Usage error, or a malformed wishlist entry (two names, bad pin). |
-| 2 | Finished with one or more entries unresolved or install failures. |
+| 2 | Finished with one or more entries unresolved, install failures, or removal failures. |
 
 ## Files
 
 - `~/.packages` — the wishlist (seeded by [dots-setup](dots-setup.md)).
 - `~/.local/state/packages/resolutions` — cached resolutions / skip records;
   delete the file to forget every stored choice.
+- `~/.local/state/packages/installed` — the install journal; the only thing
+  `refresh` uninstalls from.
 - `~/bin/packages` — the deployed shim (`common/bin/bin/packages`).
 - `~/.dots/templates/packages/.packages` — the template (`init` falls back to
   the one in the checkout the shim was deployed from).
@@ -123,10 +139,14 @@ workflow it composes:
 2. In day-to-day use, when you install a package you would want on the next
    machine too, record it: `echo htop >> ~/.packages && packages update`
    (or just `packages add htop`).
-3. Every other machine catches up through `git pull`-like convergence: the
+3. When you decide a machine no longer needs something, delete the line and
+   run `packages refresh`: it uninstalls the packages this shim installed
+   whose entries are gone (each prompted), then installs any new ones. If
+   the package was installed by hand it stays, but it is no longer managed.
+4. Every other machine catches up through `git pull`-like convergence: the
    wishlist lives in `$HOME` (not the repo — keep the repo's
    [template](man/dots-setup.1) minimal so a new machine stays lean), the
-   resolutions live in `~/.local/state`.
+   resolutions and journal live in `~/.local/state`.
 
 Comment out big or machine-specific entries (a desktop task, a database
 server) so a fresh install stays minimal; uncomment when a machine needs
@@ -147,10 +167,23 @@ echo -en "htop\nbuild-essential\nhttpie\nmariadb10\n" >> ~/.packages
 packages update
 ```
 
+Quick catch-up without the index refresh (the cheap everyday verb):
+
+```bash
+packages install
+```
+
 Inspect without installing anything:
 
 ```bash
 packages status
+```
+
+Apply a wishlist pruning (each removal prompted):
+
+```bash
+vi ~/.packages
+packages refresh
 ```
 
 Add — and immediately install — one entry:

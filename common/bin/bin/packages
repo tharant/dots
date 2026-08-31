@@ -13,8 +13,10 @@ set -euo pipefail
 # ~/.local/state/packages/resolutions so a machine only ever asks twice —
 # once per name. Names kept in the wishlist purely to record what dots-setup
 # guarantees (bash, git, direnv ...) are "provided" and skipped silently.
-# Deliberately no pruning: dropping a line from the wishlist stops managing
-# that package, it never uninstalls. stdout is human output; prompts read
+# Every package this shim installs is journaled to
+# ~/.local/state/packages/installed; only journaled packages are ever
+# uninstalled (by `packages refresh`, prompted per name) — a hand-installed
+# package is never touched. stdout is human output; prompts read
 # stdin, falling back to /dev/tty. Portable: bash 3.2 (indexed arrays only,
 # no mapfile, no case-folding); BusyBox userland.
 
@@ -22,6 +24,7 @@ DOTS_DIR="${DOTS_DIR:-$HOME/.dots}"
 PACKAGES_FILE="${PACKAGES_FILE:-$HOME/.packages}"
 STATE_DIR="${PACKAGES_STATE_DIR:-$HOME/.local/state/packages}"
 CACHE_FILE="$STATE_DIR/resolutions"
+JOURNAL_FILE="$STATE_DIR/installed"   # name\tmgr\tpkg shim-installed only
 SEARCH_MAX=5          # candidates offered per backend at the prompt
 CAND_TOTAL_MAX=10     # candidates offered in total
 
@@ -49,6 +52,7 @@ CAND_PKG=()
 
 COUNT_TOTAL=0 COUNT_PROVIDED=0 COUNT_INSTALLED=0
 COUNT_RESOLVED=0 COUNT_UNRESOLVED=0 COUNT_FAILED=0
+COUNT_REMOVED=0
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33m==> WARNING:\033[0m %s\n' "$*" >&2; }
@@ -63,12 +67,19 @@ packages it has. dots-setup seeds a minimal baseline; grow it by hand
 (`echo htop >> ~/.packages`) and converge the system with `packages update`.
 
 Commands:
-  update            Satisfy every entry in ~/.packages: refresh backend
-                    indexes, skip what is installed or provided by setup,
-                    resolve and install the rest.
   status            Report each wishlist entry's state (provided / installed
                     / resolved / no match / unresolved). Read-only: no
-                    installs, no prompts.
+                    installs, no prompts, no writes.
+  install           Resolve and install every wishlist entry that is not
+                    installed yet. No index refresh, no cleanup.
+  update            install, plus refresh the backend indexes first (apt-get
+                    update, brew update, ...) and clean them after (brew
+                    cleanup, apt/dnf/pkg autoremove). The full convergence.
+  refresh           Apply wishlist edits in both directions: install new
+                    entries (as install does), and uninstall packages this
+                    shim itself installed that are no longer in the file.
+                    Each uninstall is prompted y/n. Hand-installed packages
+                    are never touched.
   add <name> [@mgr:pkg ...]
                     Append an entry to ~/.packages and install it. A misspelt
                     duplicate is reported, not re-added.
@@ -85,10 +96,12 @@ Entry syntax (in ~/.packages and in `add`):
 
 Backends, in resolution order: apt, apk, dnf, pacman, pkg, brew (brew alone
 on macOS). The first backend with the exact name (or a pin) wins; the choice
-is recorded in ~/.local/state/packages/resolutions and reused.
+is recorded in ~/.local/state/packages/resolutions and reused. Packages this
+shim installs are journaled in ~/.local/state/packages/installed — that
+journal is the only thing `refresh` ever uninstalls from.
 
 Exit codes: 0 success; 1 usage error; 2 completed with one or more entries
-unresolved or failed installs.
+unresolved, failed installs or failed removals.
 EOF
     exit "${1:-2}"
 }
@@ -249,7 +262,9 @@ detect_backends() {
 #   be_has <mgr> <name>...          repo lookup; BE_MATCH = first found name
 #   be_installed <mgr> <pkg>        installed on this machine?
 #   be_install <mgr> <pkg>          install (root ops go through run_priv)
+#   be_uninstall <mgr> <pkg>        uninstall (root ops go through run_priv)
 #   be_refresh <mgr>                refresh the backend's index caches
+#   be_cleanup <mgr>                remove orphans/stale artifacts
 #   be_search <mgr> <term>          print candidate package names (plain)
 
 be_has() {
@@ -346,11 +361,45 @@ be_install() {
 be_refresh() {
     # apt and apk fail their lookups outright on a stale/empty index (the
     # "package not found" misresolution trap), so they refresh by default;
-    # dnf/pacman/pkg/brew refresh or fall back on their own.
+    # dnf/pacman/pkg refresh or fall back on their own; brew is cheap enough
+    # to refresh whenever the caller asked for a full update.
     case "$1" in
         apt)    run_priv apt-get update ;;
         apk)    run_priv apk update ;;
         pacman) run_priv pacman -Sy ;;
+        brew)   brew update ;;
+        *)      return 0 ;;
+    esac
+}
+
+be_uninstall() {
+    local mgr="$1" pkg="$2"
+    case "$mgr" in
+        apt)    run_priv apt-get remove -y "$pkg" ;;
+        apk)    run_priv apk del "$pkg" ;;
+        dnf)    run_priv dnf remove -y "$pkg" ;;
+        pacman) run_priv pacman -R --noconfirm "$pkg" ;;
+        pkg)    run_priv pkg remove -y "$pkg" ;;
+        brew)
+            if [ "$(id -u)" -eq 0 ]; then
+                warn "brew refuses to run as root — cannot uninstall $pkg"
+                return 1
+            fi
+            brew uninstall "$pkg"
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+be_cleanup() {
+    # be_cleanup <mgr> — best-effort orphan/stale-artifact removal; only
+    # manager-declared removable units (brew's stale versions, auto-installed
+    # and no longer required packages), never explicit wishes.
+    case "$1" in
+        apt)    run_priv apt-get autoremove -y ;;
+        dnf)    run_priv dnf -y autoremove ;;
+        pkg)    run_priv pkg autoremove -y ;;
+        brew)   brew cleanup ;;
         *)      return 0 ;;
     esac
 }
@@ -424,6 +473,35 @@ cache_put() {
     mv "$tmp" "$CACHE_FILE"
 }
 
+journal_add() {
+    # journal_add <name> <mgr> <pkg> — record a package this shim installed
+    # (one line per name, later installs of the same name replace the line).
+    # The journal is what `refresh` is allowed to uninstall from.
+    local tmp name="$1" mgr="$2" pkg="$3" tab
+    tab="$(printf '\t')"
+    mkdir -p "$STATE_DIR"
+    tmp="$JOURNAL_FILE.tmp.$$"
+    if [ -f "$JOURNAL_FILE" ]; then
+        grep -vF "${name}${tab}" "$JOURNAL_FILE" > "$tmp" || true
+    else
+        : > "$tmp"
+    fi
+    printf '%s\t%s\t%s\n' "$name" "$mgr" "$pkg" >> "$tmp"
+    mv "$tmp" "$JOURNAL_FILE"
+}
+
+journal_remove() {
+    # journal_remove <name> — forget a journal entry (after a successful
+    # uninstall). Reading processes keep their open fd across the mv; a
+    # caller iterating the journal stays consistent.
+    local tmp name="$1" tab
+    tab="$(printf '\t')"
+    [ -f "$JOURNAL_FILE" ] || return 0
+    tmp="$JOURNAL_FILE.tmp.$$"
+    grep -vF "${name}${tab}" "$JOURNAL_FILE" > "$tmp" || true
+    mv "$tmp" "$JOURNAL_FILE"
+}
+
 # --- Per-entry resolution ---------------------------------------------------------
 
 candidate_search() {
@@ -454,7 +532,6 @@ candidate_prompt() {
         warn "$ENTRY_NAME matched no backend exactly and no search turned up candidates"
         return 1
     fi
-    warn "$ENTRY_NAME matched no backend exactly — candidates:"
     warn "$ENTRY_NAME matched no backend exactly — candidates:"
     i=0
     while [ "$i" -lt "$CAND_N" ]; do
@@ -578,7 +655,7 @@ plan_entry() {
         resolved)
             COUNT_RESOLVED=$((COUNT_RESOLVED + 1))
             printf '%-10s %s -> %s/%s %s\n' "resolved" "$ENTRY_NAME" \
-                "$R_MGR" "$R_PKG" "(run packages update to install)"
+                "$R_MGR" "$R_PKG" "(run packages install to install)"
             ;;
         excluded)
             printf '%-10s %s %s\n' "skipped" "$ENTRY_NAME" \
@@ -614,6 +691,7 @@ sync_entry() {
     if [ "$R_STATE" = "resolved" ]; then
         info "$ENTRY_NAME: installing $R_PKG ($R_MGR)"
         if be_install "$R_MGR" "$R_PKG"; then
+            journal_add "$ENTRY_NAME" "$R_MGR" "$R_PKG"
             COUNT_RESOLVED=$((COUNT_RESOLVED + 1))
             return 0
         fi
@@ -624,6 +702,7 @@ sync_entry() {
     # No exact or recorded match: interactive resolution
     if candidate_prompt; then
         if be_install "$R_MGR" "$R_PKG"; then
+            journal_add "$ENTRY_NAME" "$R_MGR" "$R_PKG"
             info "$ENTRY_NAME: installed $R_PKG ($R_MGR)"
             COUNT_RESOLVED=$((COUNT_RESOLVED + 1))
             return 0
@@ -638,7 +717,7 @@ sync_entry() {
 }
 
 process_entry() {
-    # process_entry <mode> <tokens...> — mode: status | update | add
+    # process_entry <mode> <tokens...> — mode: status | sync
     local mode="$1"
     shift
     entry_parse "$@" || return 0
@@ -681,47 +760,151 @@ wishlist_has() {
 
 # --- Commands --------------------------------------------------------------------
 
-refresh_backends() {
+index_refresh() {
+    # index_refresh — refresh every backend's package index (best effort)
+    local b
+    detect_priv
+    for b in $BE_LIST; do
+        info "Refreshing the $b index..."
+        be_refresh "$b" || warn "$b index refresh failed (offline?) — continuing"
+    done
+}
+
+be_cleanups() {
+    # be_cleanups — after installs, drop what the managers themselves declare
+    # removable (stale brew versions, auto-installed orphans). Best effort.
     local b
     detect_priv
     for b in $BE_LIST; do
         case "$b" in
-            apt|apk|pacman)
-                info "Refreshing the $b index..."
-                be_refresh "$b" || warn "$b index refresh failed (offline?) — continuing"
+            apt|dnf|pkg|brew)
+                info "Cleaning up with $b..."
+                be_cleanup "$b" || warn "$b cleanup failed — continuing"
                 ;;
         esac
     done
 }
 
+confirm() {
+    # confirm <prompt> [default] — y/n read; no TTY (EOF) counts as no
+    if ! read_line "$1" || [ -z "$REPLY_VAL" ]; then
+        return 1
+    fi
+    case "$REPLY_VAL" in
+        y|Y|yes|YES) return 0 ;;
+    esac
+    return 1
+}
+
+prune_journaled() {
+    # prune_journaled — uninstall packages this shim installed whose wishlist
+    # line is gone. The journal is the only uninstall source: a package
+    # installed by hand (or by dots-setup) is never removed. Each uninstall
+    # is prompted; on EOF everything is kept and just listed. The journal is
+    # read on fd 3 so that confirm()'s stdin read (a pipe or the tty) is not
+    # consumed by the loop.
+    [ -f "$JOURNAL_FILE" ] || return 0
+    local line n m p tab
+    tab="$(printf '\t')"
+    while IFS= read -r line <&3 || [ -n "$line" ]; do
+        [ -n "$line" ] || continue
+        n="${line%%"$tab"*}"
+        m="${line#*"$tab"}"
+        p="${m#*"$tab"}"
+        m="${m%%"$tab"*}"
+        if wishlist_has "$n"; then
+            continue
+        fi
+        if ! be_installed "$m" "$p"; then
+            # no longer present — drop the stale journal line, silently
+            journal_remove "$n"
+            continue
+        fi
+        if confirm "refresh: remove $n (installed $p via $m, no longer in $PACKAGES_FILE)? [y/N] "; then
+            info "$n: uninstalling $p ($m)"
+            if be_uninstall "$m" "$p"; then
+                journal_remove "$n"
+                COUNT_REMOVED=$((COUNT_REMOVED + 1))
+            else
+                warn "$n: uninstall failed — kept in $JOURNAL_FILE"
+                COUNT_FAILED=$((COUNT_FAILED + 1))
+            fi
+        else
+            info "kept $n (stays journaled; $JOURNAL_FILE)"
+        fi
+    done 3< "$JOURNAL_FILE"
+    return 0
+}
+
 summary() {
+    # summary [install] — in install/update/refresh context RESOLVED packages
+    # were just installed; in status context they merely await installation.
+    local mode="${1:-install}" word
+    word="newly installed"
+    [ "$mode" = "status" ] && word="resolved but not installed"
     if [ "$COUNT_PROVIDED" -gt 0 ]; then
         info "$COUNT_PROVIDED of $COUNT_TOTAL entries are provided by dots-setup — skipped silently"
     fi
     info "$COUNT_TOTAL entries: $COUNT_INSTALLED already installed, \
-$COUNT_RESOLVED newly installed, $COUNT_FAILED failed install(s), \
+$COUNT_RESOLVED $word, $COUNT_FAILED failed install(s), \
 $COUNT_UNRESOLVED unresolved"
+    if [ "$COUNT_REMOVED" -gt 0 ]; then
+        info "$COUNT_REMOVED removed (journaled installs no longer in the wishlist)"
+    fi
+}
+
+require_wishlist() {
+    [ -f "$PACKAGES_FILE" ] || die "no wishlist at $PACKAGES_FILE — run 'packages init' (or 'packages add <name>')"
+}
+
+# The shared half of install/update/refresh: resolve + install every wishlist
+# entry that is not installed yet (provided/skip logic is inside sync_entry).
+install_wishes() {
+    iter_entries sync || true
+    summary
+}
+
+unfinished() {
+    [ "$COUNT_FAILED" -gt 0 ] || [ "$COUNT_UNRESOLVED" -gt 0 ]
 }
 
 cmd_update() {
     detect_backends
     [ -n "$BE_LIST" ] || die "no package manager backend found (apt, apk, dnf, pacman, pkg, brew)"
-    [ -f "$PACKAGES_FILE" ] || die "no wishlist at $PACKAGES_FILE — run 'packages init' (or 'packages add <name>')"
-    refresh_backends
-    iter_entries update || true
-    summary
-    if [ "$COUNT_FAILED" -gt 0 ] || [ "$COUNT_UNRESOLVED" -gt 0 ]; then
-        exit 2
-    fi
+    require_wishlist
+    index_refresh
+    install_wishes
+    be_cleanups
+    unfinished && exit 2
+    return 0
+}
+
+cmd_install() {
+    detect_backends
+    [ -n "$BE_LIST" ] || die "no package manager backend found (apt, apk, dnf, pacman, pkg, brew)"
+    require_wishlist
+    install_wishes
+    unfinished && exit 2
+    return 0
+}
+
+cmd_refresh() {
+    detect_backends
+    [ -n "$BE_LIST" ] || die "no package manager backend found (apt, apk, dnf, pacman, pkg, brew)"
+    require_wishlist
+    prune_journaled
+    install_wishes
+    unfinished && exit 2
+    return 0
 }
 
 cmd_status() {
     detect_backends
     [ -n "$BE_LIST" ] || die "no package manager backend found (apt/apk/dnf/pacman/pkg/brew)"
-    [ -f "$PACKAGES_FILE" ] || die "no wishlist at $PACKAGES_FILE — run 'packages init' (or 'packages add <name>')"
+    require_wishlist
     info "wishlist: $PACKAGES_FILE; backends:$BE_LIST"
     iter_entries status
-    summary
+    summary status
 }
 
 cmd_add() {
@@ -731,7 +914,7 @@ cmd_add() {
     esac
     detect_backends
     [ -n "$BE_LIST" ] || die "no package manager backend found (apt/apk/dnf/pacman/pkg/brew)"
-    [ -f "$PACKAGES_FILE" ] || die "no wishlist at $PACKAGES_FILE — run 'packages init' first"
+    require_wishlist
     if wishlist_has "$1"; then
         info "$1 is already in $PACKAGES_FILE — nothing added"
         return 0
@@ -743,8 +926,7 @@ cmd_add() {
     fi
     printf '%s\n' "$*" >> "$PACKAGES_FILE"
     info "added to $PACKAGES_FILE: $*"
-    refresh_backends
-    process_entry add "$@" || true
+    process_entry sync "$@" || true
     summary
     if [ "$COUNT_FAILED" -gt 0 ] || [ "$COUNT_UNRESOLVED" -gt 0 ]; then
         exit 2
@@ -796,8 +978,10 @@ main() {
     case "${1:-}" in
         -h|--help) usage 0 ;;
         "")        usage 0 ;;
-        update)    shift; cmd_update ;;
         status)    cmd_status ;;
+        install)   cmd_install ;;
+        update)    cmd_update ;;
+        refresh)   cmd_refresh ;;
         add)       shift; cmd_add "$@" ;;
         init)      shift; cmd_init "$@" ;;
         *)         die "unknown command: $1 (see packages --help)" ;;

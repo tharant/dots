@@ -117,7 +117,9 @@ just man-check                # mandoc -T lint the docs/man pages
 just man-install / man-uninstall  # Manage manpage symlinks in ~/.local/share/man
 just runtimes <cmd>            # Pass a subcommand to the runtimes CLI (uv/fnm/sdkman)
 just packages <cmd>            # Pass a subcommand to the packages CLI (~/.packages wishlist)
-just dots <cmd>                 # Pass a subcommand to the dots CLI (also usable as ~/bin/dots)
+just dots <cmd>                 # Pass a subcommand to the dots CLI (also usable as ~/bin/dots);
+                                #   dots packages <cmd> reaches the wishlist CLI in the same
+                                #   checkout (status/install/update/refresh/add)
 
 # The dots CLI (~/bin/dots, docs/dots.md) delegates every op above 1:1 to
 # scripts/*.sh and adds: dots sync (pull --ff-only → restow → verify) and

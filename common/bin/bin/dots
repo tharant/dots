@@ -51,6 +51,8 @@ Commands:
                             editable message. Never pushes.
   status                    Stow dry-run per package (conflict check)
   list-packages             List stow packages by platform
+  packages <cmd>            Passthrough to the packages wishlist CLI
+                            (status, install, update, refresh, add)
   man-check | man-install | man-uninstall
                             docs/man Makefile targets
   -h | --help               Show this help.
@@ -234,6 +236,7 @@ cmd_encrypt() {
     exec "$REPO_ROOT/scripts/encrypt.sh" "$@"
 }
 cmd_man() { make -C "$REPO_ROOT/docs/man" "$1"; }
+cmd_packages() { exec "$REPO_ROOT/common/bin/bin/packages" "$@"; }
 
 # --- Read-only mirrors of the Justfile recipes ---
 
@@ -881,6 +884,7 @@ case $cmd in
     man-uninstall) require_repo; cmd_man uninstall ;;
     status)        require_repo; cmd_status ;;
     list-packages) cmd_list_packages ;;
+    packages)      require_repo; cmd_packages "$@" ;;
     sync)          cmd_sync "$@" ;;
     commit)        cmd_commit "$@" ;;
     -h|--help|help|"") usage ;;

@@ -26,23 +26,42 @@ from
 .IR common/bin/bin/packages .
 .SH COMMANDS
 .TP
-.B update
-Satisfy every wishlist entry: refresh backend index caches, skip entries
-already installed or provided by setup, and resolve + install the rest.
-Entries that match no backend exactly are resolved once interactively (see
-.BR RESOLUTION ).
-.TP
 .B status
 Report each entry's state \-\- provided, installed, resolved (a cached
 choice still to install), not here (pins exclude every available backend),
-or no match. Read-only: no installs, no prompts. Always exits 0.
+or no match. Read-only: no installs, no prompts, no writes.
+.TP
+.B install
+Resolve and install every wishlist entry that is not installed yet
+(entries provided by setup, already installed, pin-excluded or skip-
+recorded are skipped). No index refresh, no cleanup.
+.TP
+.B update
+.B install ,
+plus refresh the backend indexes first
+.RB ( "apt-get update" ,
+.BR "brew update" ,
+etc.)
+and clean them after
+.RB ( "brew cleanup" ,
+.BR "apt-get autoremove" ,
+etc.).
+The full convergence.
+.TP
+.B refresh
+Apply wishlist edits in both directions: uninstall packages the shim
+itself installed whose wishlist line is gone (each prompted y/n), then
+.B install .
+Only journaled installs are ever uninstalled \- see
+.BR INSTALLED JOURNAL .
+Hand-installed packages are never touched.
 .TP
 .BI add " name" \ [ @mgr:pkg " ...]"
 Append an entry to
 .I ~/.packages
 and install it. An entry already named in the wishlist is reported and
 not re-added; installing the existing list is left to
-.BR update .
+.B install .
 .TP
 .BI init " [template]"
 Seed
@@ -140,8 +159,18 @@ to leave the entry unresolved for now. Decisions are stored one per line
 is a skip record) and applied silently on later runs, so a machine asks at
 most once per name. Exact matches are deterministic and never cached.
 .PP
-The shim never removes anything: a wishlist line deleted only stops being
-managed. There is no pruning and no uninstall path.
+The shim never uninstalls a package installed by hand or by
+.BR dots\-setup (1).
+.SH INSTALLED JOURNAL
+Every package this shim installs is journaled to
+.I ~/.local/state/packages/installed
+(one line per name: name<TAB>backend<TAB>package). The journal is the only
+uninstall source: when a journaled package is no longer in the wishlist,
+.BR refresh (1)
+offers to remove it (prompted y/n; with no terminal, everything is kept and
+listed). A wishlist line deleted for a package that was installed by hand
+only stops being managed \- nothing is removed.
+.SH ENVIRONMENT
 .SH ENVIRONMENT
 .TP
 .B DOTS_DIR
@@ -153,18 +182,20 @@ Overrides the wishlist path (default
 .IR ~/.packages ).
 .TP
 .B PACKAGES_STATE_DIR
-Overrides the state directory holding the resolution cache (default
+Overrides the state directory holding the resolution cache and the
+installed journal (default
 .IR ~/.local/state/packages ).
 .SH EXIT STATUS
 .TP
 .B 0
-Update/add converged, or status completed.
+Converged, or status completed.
 .TP
 .B 1
 Usage error or bad wishlist syntax (e.g. two names in one entry).
 .TP
 .B 2
-Completed, but one or more entries are unresolved or failed to install.
+Completed, but one or more entries are unresolved, failed to install, or
+failed to uninstall.
 .SH FILES
 .TP
 .I ~/.packages
@@ -173,6 +204,10 @@ The wishlist (seeded by
 .TP
 .I ~/.local/state/packages/resolutions
 Cached resolutions and skip records.
+.TP
+.I ~/.local/state/packages/installed
+The install journal (used only by
+.BR refresh ).
 .TP
 .I ~/bin/packages
 The deployed shim
@@ -205,8 +240,20 @@ Inspect before installing:
 .RS
 .nf
 packages status
+.fi
+.RE
+.PP
+Apply wishlist edits in both directions (install new, uninstall deleted
+journal entries \- each prompted):
+.PP
+.RS
+.nf
+vi ~/.packages
+packages refresh
+.fi
 .RE
 .SH SEE ALSO
+.BR dots (1),
 .BR dots\-setup (1),
 .BR runtimes (1),
 .BR stow (1),
