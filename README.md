@@ -82,7 +82,7 @@ Platform overrides must **not** be conditionals in `common/`. Instead, each plat
 ./scripts/verify.sh                           # Deployment health check (tools, symlinks, permissions, secrets, direnv)
 ```
 
-The same operations are available through `just` (`just setup`, `just restow`, `just verify`, `just encrypt <file>`, `just lint`, …) — run `just` for the full list.
+The same operations are available through `just` (`just setup`, `just restow`, `just verify`, `just encrypt <file>`, `just lint`, …) — run `just` for the full list. On any blessed machine, [dots(1)](docs/dots.md) (`~/bin/dots`) is the single machine-side CLI for the same operations plus two composed ones: `dots sync` (pull → restow → verify) and `dots commit` (survey, encrypt/adopt/stage with a plaintext-secret gate, review, commit — never pushes).
 
 ### Per-directory environments + managed runtimes
 
@@ -102,6 +102,7 @@ agreement with the code they document:
 | [loadavg(1)](docs/loadavg.md) | `~/bin/loadavg` — status-bar load shim (`common/bin`) |
 | [tmux-copy(1)](docs/tmux-copy.md) | `~/bin/tmux-copy` — clipboard ladder + OSC 52 (`common/bin`) |
 | [runtimes(1)](docs/runtimes.md) | `~/bin/runtimes` — managed runtimes CLI: uv/fnm/sdkman (`common/bin`) |
+| [dots(1)](docs/dots.md) | `~/bin/dots` — repo orchestration CLI: delegates every op, plus composed `sync` and gated interactive `commit` (never pushes) (`common/bin`) |
 
 Install them as real manpages (see [docs/man/Makefile](docs/man/Makefile)):
 

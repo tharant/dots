@@ -1,0 +1,852 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Orchestration shim for the dots repo — the machine-side entry point next to
+# ~/bin/runtimes. It delegates every existing operation 1:1 to the repo's
+# scripts (setup/verify/encrypt/decrypt/man), mirrors the two read-only
+# Justfile recipes (status, list-packages), and adds two composed commands:
+#   sync   — pull --ff-only (--autostash on a dirty tree), restow, verify.
+#   commit — survey the tree, interactively build a plan (adopt unmanaged
+#            $HOME files, encrypt plaintext secrets via scripts/encrypt.sh
+#            --no-commit, stage changes), review the staged diff, then commit
+#            with a generated, editable message. dots commit NEVER pushes.
+# Orchestration only: stow/age/git logic is sequenced and gated here, never
+# re-implemented. Portable: bash 3.2 (no associative arrays, no mapfile, no
+# ${var,,}, no read -i), BusyBox userland. The repo checkout is resolved from
+# $0, so any clone works; a blessed machine runs the same code through the
+# stowed ~/bin/dots symlink.
+
+AGE_MAGIC="age-encryption.org/v1"
+# scripts/setup.sh keys off DOTS_DIR (default ~/.dots); require_repo points it
+# at THIS tree (resolved from $0), not the blessed clone.
+export DOTS_DIR=""
+
+# --- Helpers (info/warn/die -> stderr; stdout stays machine-clean) ---
+
+info() { echo -e "\033[1;34m==>\033[0m $*" >&2; }
+warn() { echo -e "\033[1;33m==> WARNING:\033[0m $*" >&2; }
+die()  { echo -e "\033[1;31m==> ERROR:\033[0m $*" >&2; exit 1; }
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: dots <command> [args]
+
+Orchestration CLI for the dots repo: a thin wrapper over scripts/*.sh plus
+the sync and commit compositions. Secrets are only ever handled by
+scripts/encrypt.sh and scripts/decrypt.sh.
+
+Commands:
+  setup                     Full bootstrap (same as scripts/setup.sh)
+  restow                    Re-stow all packages (setup.sh --restow)
+  adopt                     Adopt existing files into the repo (setup.sh --adopt)
+  unstow                    Remove all managed symlinks (setup.sh --unstow)
+  verify [--quiet]          Symlink + permissions health check
+  encrypt <file> [out.age]  Encrypt a file (age key + passphrase copies)
+  decrypt                   Decrypt all secrets
+  sync                      pull --ff-only (--autostash when dirty), then
+                            restow, then verify; non-zero if either restow or
+                            verify failed
+  commit [-m <msg>]         Survey, plan, encrypt/adopt/stage, review the
+                            staged diff, then commit with a generated,
+                            editable message. Never pushes.
+  status                    Stow dry-run per package (conflict check)
+  list-packages             List stow packages by platform
+  man-check | man-install | man-uninstall
+                            docs/man Makefile targets
+  -h | --help               Show this help.
+
+dots commit exit codes: 0 committed (or clean tree), 1 error/gate/aborted,
+2 run non-interactively (plan printed only).
+EOF
+    exit 0
+}
+
+resolve_symlinks() {
+    # Follow symlinks without readlink -f (absent on macOS/BSD); $0 is
+    # ~/bin/dots -> repo/common/bin/bin/dots when stowed.
+    local p=$1 target
+    while [ -L "$p" ]; do
+        target=$(readlink "$p")
+        case $target in
+            /*) p=$target ;;
+            *)  p=$(dirname "$p")/$target ;;
+        esac
+    done
+    printf '%s\n' "$p"
+}
+
+SELF_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+# common/bin/bin/dots -> repo root is three levels up (bin -> bin -> common).
+REPO_ROOT="$(cd "$(dirname "$(resolve_symlinks "$SELF_PATH")")/../../.." && pwd)"
+
+detect_platform() {
+    case "$(uname -s)" in
+        Darwin) PLATFORM=macos ;;
+        Linux)  PLATFORM=linux ;;
+        *BSD*)  PLATFORM=bsd ;;
+        *)      PLATFORM="" ;;
+    esac
+}
+
+require_repo() {
+    [ -d "$REPO_ROOT/.git" ] \
+        || die "not a git checkout: $REPO_ROOT (dots must run from a clone of the dots repo)"
+    [ -f "$REPO_ROOT/scripts/setup.sh" ] \
+        || die "scripts/setup.sh missing from $REPO_ROOT — incomplete checkout"
+    DOTS_DIR="$REPO_ROOT"
+}
+
+# Prompts must reach a terminal even when stdin was piped or closed (reattach
+# to /dev/tty, as setup.sh does); PROMPT_OK gates every interactive path.
+PROMPT_OK=false
+ensure_prompt_tty() {
+    if [ -t 0 ]; then
+        PROMPT_OK=true
+        return 0
+    fi
+    if { : </dev/tty; } 2>/dev/null; then
+        exec 0</dev/tty
+        PROMPT_OK=true
+    fi
+}
+
+# confirm <prompt> [y|n] — default-n unless asked otherwise; 0 on yes.
+confirm() {
+    local prompt=$1 default=${2:-n} reply
+    [ "$PROMPT_OK" = true ] || return 1
+    if [ "$default" = y ]; then
+        printf '%s [Y/n] ' "$prompt" >&2
+    else
+        printf '%s [y/N] ' "$prompt" >&2
+    fi
+    reply=""
+    if ! IFS= read -r reply; then
+        return 1
+    fi
+    case $reply in
+        # explicit answer always wins over the default
+        y|Y|yes|YES) return 0 ;;
+        n|N|no|NO)   return 1 ;;
+        "")          case $default in y) return 0 ;; esac ; return 1 ;;
+    esac
+    return 1
+}
+
+# --- Classification helpers (mirror .gitignore + verify.sh's noise set) ---
+
+is_noise() {
+    # Editor/OS/cache noise: never proposed, never gated.
+    local p=$1 b=${1##*/}
+    case $b in
+        *~|'#'*'#'|.DS_Store|Thumbs.db|.gitkeep) return 0 ;;
+    esac
+    case $p in
+        .idea/*|.idea|.claude/*|.claude|common/vim/.vim/.theme|\
+        common/sbt/.sbt/boot/*|common/ivy2/.ivy2/cache/*|\
+        */.idea/*|*/.claude/*|*/.runtimesrc.lock|*/.runtimes.lock|*/.venv|\
+        */.venv/*) return 0 ;;
+    esac
+    return 1
+}
+
+is_secret_name() {
+    # Basenames that are plaintext key/credential material (mirror of the
+    # .gitignore secret family; *.pub is always public).
+    local b=$1
+    case $b in
+        *.age) return 1 ;;   # age artifacts are ciphertext, never plaintext
+        id_*) case $b in id_*.pub) return 1 ;; esac
+              return 0 ;;
+        *.pem|*.key|*.secret) return 0 ;;
+        .env|.env.*) case $b in .env.example) return 1 ;; esac
+                     return 0 ;;
+    esac
+    return 1
+}
+
+is_nonsecret_name() {
+    # Files that live in ~/.ssh or ~/.config/tokens but are not secrets.
+    local b=$1
+    case $b in
+        config|known_hosts|known_hosts.*|authorized_keys|environment|\
+        agent-env|*.pub|*~|'#'*'#'|.DS_Store) return 0 ;;
+    esac
+    return 1
+}
+
+is_unmanaged_noise() {
+    # Extra exclusions for stray $HOME files (run before adopt proposals).
+    local f=$1 b=${1##*/}
+    case $b in
+        *.log|*.lock|*.pid|node_modules|4913) return 0 ;;
+    esac
+    case $f in
+        */node_modules|*/node_modules/*|*/.cache/*|*/.age/*|*/.runtimes/*|\
+        "$HOME"/.config/tmux-powerline/tmux-powerline/*|\
+        "$HOME"/.config/tokens/*|"$HOME"/.ssh/*|\
+        "$HOME"/.runtimesrc|"$HOME"/.runtimesrc.lock|"$HOME"/.runtimes.lock|\
+        "$HOME"/.envrc) return 0 ;;
+    esac
+    return 1
+}
+
+# --- Delegating commands (DOTS_DIR is exported by require_repo) ---
+
+cmd_setup()   { exec "$REPO_ROOT/scripts/setup.sh" "$@"; }
+cmd_restow()  { exec "$REPO_ROOT/scripts/setup.sh" --restow; }
+cmd_adopt()   { exec "$REPO_ROOT/scripts/setup.sh" --adopt; }
+cmd_unstow()  { exec "$REPO_ROOT/scripts/setup.sh" --unstow; }
+cmd_verify()  { exec "$REPO_ROOT/scripts/verify.sh" "$@"; }
+cmd_decrypt() { exec "$REPO_ROOT/scripts/decrypt.sh" "$@"; }
+cmd_encrypt() {
+    [ "$#" -ge 1 ] || die "usage: dots encrypt <plaintext-file> [output.age]"
+    exec "$REPO_ROOT/scripts/encrypt.sh" "$@"
+}
+cmd_man() { make -C "$REPO_ROOT/docs/man" "$1"; }
+
+# --- Read-only mirrors of the Justfile recipes ---
+
+cmd_list_packages() {
+    local base pkg
+    for base in common macos linux bsd alpine wsl; do
+        [ -d "$REPO_ROOT/$base" ] || continue
+        for pkg in "$REPO_ROOT/$base"/*/; do
+            [ -d "$pkg" ] || continue
+            printf '%s/%s\n' "$base" "$(basename "$pkg")" >&2
+        done
+    done
+}
+
+cmd_status() {
+    local base pkg out
+    command -v stow >/dev/null 2>&1 || die "stow not installed (run 'dots setup')"
+    for base in common macos linux bsd alpine wsl; do
+        [ -d "$REPO_ROOT/$base" ] || continue
+        for pkg in "$REPO_ROOT/$base"/*/; do
+            [ -d "$pkg" ] || continue
+            pkg=$(basename "$pkg")
+            if out=$(stow -d "$REPO_ROOT/$base" -t "$HOME" --no-folding -n "$pkg" 2>&1); then
+                info "ok $base/$pkg"
+            else
+                warn "CONFLICT $base/$pkg"
+                printf '%s\n' "$out" | sed 's/^/        /' >&2
+            fi
+        done
+    done
+}
+
+# --- dots sync ---
+
+cmd_sync() {
+    require_repo
+    local restow_failed=false verify_failed=false failed=""
+    if [ -n "$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)" ]; then
+        info "repo has local changes — pulling with --autostash"
+        git -C "$REPO_ROOT" pull --ff-only --autostash \
+            || die "pull failed — keeping the current checkout (nothing was restowed)"
+    else
+        git -C "$REPO_ROOT" pull --ff-only \
+            || die "pull failed — keeping the current checkout (nothing was restowed)"
+    fi
+    # The restow reports its own failures (audit log + FAILURES list); keep
+    # going so verify still produces the health report.
+    if ! "$REPO_ROOT/scripts/setup.sh" --restow; then
+        restow_failed=true
+        warn "restow reported failures (see its output above)"
+    fi
+    if ! "$REPO_ROOT/scripts/verify.sh"; then
+        verify_failed=true
+        warn "verify reported failures (see its output above)"
+    fi
+    if [ "$restow_failed" = true ]; then failed=restow; fi
+    if [ "$verify_failed" = true ]; then failed="${failed:+$failed, }verify"; fi
+    if [ -n "$failed" ]; then
+        warn "sync finished with failures: $failed"
+    else
+        info "sync complete: pulled, restowed, verified"
+    fi
+    if [ "$restow_failed" = true ] || [ "$verify_failed" = true ]; then
+        exit 1
+    fi
+    exit 0
+}
+
+# --- dots commit ---
+
+# Plan (parallel arrays, bash-3.2-safe; indexed by P_N)
+P_KIND=(); P_PATH=(); P_EXTRA=(); P_ADOPT=(); P_ANSWER=(); P_N=0
+# Pre-existing staged paths: snapshotted in preflight; never re-added, never
+# touched by the abort reset.
+PRESTAGED=(); PRESTAGED_N=0
+# Paths we stage ourselves (the abort reset undoes exactly these)
+STAGED_PATHS=(); STAGED_N=0
+STAGED_BY_US=false
+# Generated message
+COMMIT_MSG_FILE=""
+COMMIT_SUBJECT=""
+
+plan_add() { # plan_add <kind> <path> <extra> <adopt-info>
+    P_KIND[P_N]=$1
+    P_PATH[P_N]=$2
+    P_EXTRA[P_N]=$3
+    P_ADOPT[P_N]=$4
+    P_ANSWER[P_N]=0
+    P_N=$((P_N + 1))
+}
+
+is_pre_staged() {
+    local p=$1 i
+    [ "$PRESTAGED_N" -gt 0 ] || return 1
+    for i in "${PRESTAGED[@]}"; do
+        [ "$i" = "$p" ] && return 0
+    done
+    return 1
+}
+
+snap_prestaged() {
+    local p
+    PRESTAGED=(); PRESTAGED_N=0
+    while IFS= read -r -d '' p; do
+        PRESTAGED[PRESTAGED_N]=$p
+        PRESTAGED_N=$((PRESTAGED_N + 1))
+    done < <(git -C "$REPO_ROOT" diff --cached --name-only -z 2>/dev/null)
+}
+
+rel_to_root() { # strip a leading REPO_ROOT/ from the argument
+    local p=$1
+    case $p in
+        "$REPO_ROOT"/*) p=${p#"$REPO_ROOT/"} ;;
+    esac
+    printf '%s\n' "$p"
+}
+
+survey_git() {
+    # One NUL-delimited pass over the status in $REPO_ROOT. Untracked files
+    # and worktree changes become stage items; ignored/untracked files whose
+    # basename looks like plaintext secret material become warning items the
+    # gate will refuse to commit unencrypted.
+    local rec st path rename_from label
+    rec=""
+    while IFS= read -r -d '' rec || [ -n "$rec" ]; do
+        # porcelain -z record: "XY path" in one NUL-terminated string (plus a
+        # second NUL-terminated record holding the original path for R/C).
+        st=${rec%"${rec#??}"}
+        path=${rec#?? }
+        rename_from=""
+        case $st in
+            R*|C*) IFS= read -r -d '' rename_from || true ;;
+        esac
+        case $path in */) continue ;; esac
+        is_noise "$path" && continue
+        case $st in
+            '??'|'!!')
+                if is_pre_staged "$path"; then
+                    continue
+                fi
+                if is_secret_name "${path##*/}"; then
+                    warn "plaintext secret-named file in the checkout (not staged, not committed): $path"
+                else
+                    plan_add stage "$path" "new file" ""
+                fi
+                ;;
+            '?'*|'!'*) continue ;;
+            *)
+                case ${st#?} in
+                    ' ') continue ;;   # nothing left in the worktree
+                esac
+                # A worktree change (modify/delete/type); offer to stage it.
+                if ! is_pre_staged "$path"; then
+                    case ${st#?} in
+                        M|D|T)
+                            label="worktree change"
+                            case $rename_from in
+                                "") ;;
+                                *) label="worktree change (rename from $rename_from)" ;;
+                            esac
+                            plan_add stage "$path" "$label" "" ;;
+                    esac
+                fi
+                ;;
+        esac
+    done < <(git -C "$REPO_ROOT" status --porcelain=v1 -z -uall --ignored=matching 2>/dev/null)
+}
+
+survey_repo_secrets() {
+    # Plaintext files inside secrets/ that are not artifacts. The output path
+    # is the sibling .age (encrypt.sh's overwrite prompt guards re-encryption
+    # of an existing pair).
+    local f rel b
+    while IFS= read -r -d '' f; do
+        rel=$(rel_to_root "$f"); b=${rel##*/}
+        case $b in
+            *.age|recipients.txt|recipients.txt~|.gitkeep|*~|'#'*'#') continue ;;
+        esac
+        is_noise "$rel" && continue
+        plan_add encrypt "$rel" "→ $rel.age (overwrite prompt if it exists)" "$rel.age"
+    done < <(find "$REPO_ROOT/secrets" -type f -print0 2>/dev/null)
+}
+
+survey_home_secrets() {
+    # ~/.ssh and ~/.config/tokens files with no committed artifact pair.
+    local entry root sub f rel b target
+    for entry in "$HOME/.ssh|ssh" "$HOME/.config/tokens|tokens"; do
+        root=${entry%|*}; sub=${entry#*|}
+        [ -d "$root" ] || continue
+        while IFS= read -r -d '' f; do
+            rel=${f#"$root"/}; b=${rel##*/}
+            is_nonsecret_name "$b" && continue
+            is_noise "$b" && continue
+            if [ -f "$REPO_ROOT/secrets/$sub/$rel.age" ] \
+                    && [ -f "$REPO_ROOT/secrets/$sub/$rel.phrase.age" ]; then
+                continue
+            fi
+            target="secrets/$sub/$rel.age"
+            plan_add encrypt "$root/$rel" "→ $target" "$target"
+        done < <(find "$root" -maxdepth 1 -type f -print0 2>/dev/null)
+    done
+}
+
+survey_unmanaged() {
+    [ -n "$PLATFORM" ] || return 0
+    # Stray $HOME files that would slot into an existing package: searched
+    # only inside package anchor dirs (maxdepth 3), never across all of $HOME.
+    local base pkg pkgname anchor rel f dest
+    for base in common "$PLATFORM" alpine wsl; do
+        [ "$base" = "/" ] && continue
+        [ -d "$REPO_ROOT/$base" ] || continue
+        for pkg in "$REPO_ROOT/$base"/*/; do
+            [ -d "$pkg" ] || continue
+            pkgname=$(basename "$pkg")
+            for anchor in "$pkg"*/; do                  # top-level package entries
+                [ -d "$anchor" ] || continue
+                rel=${anchor#"$pkg"}; rel=${rel%/}
+                [ -d "$HOME/$rel" ] || continue
+                while IFS= read -r -d '' f; do
+                    [ -L "$f" ] && continue             # already managed
+                    is_unmanaged_noise "$f" && continue
+                    dest="$REPO_ROOT/$base/$pkgname/"${f#"$HOME"/}
+                    [ -e "$dest" ] && continue          # not "unmanaged"
+                    plan_add adopt "$f" "$(rel_to_root "$dest")" "$base/$pkgname"
+                done < <(find "$HOME/$rel" -maxdepth 3 -type f -print0 2>/dev/null)
+            done
+        done
+    done
+}
+
+kind_title() {
+    case $1 in
+        stage)   printf '%s' "Changes to track (git add)" ;;
+        encrypt) printf '%s' "Plaintext secrets to encrypt (scripts/encrypt.sh --no-commit)" ;;
+        adopt)   printf '%s' "Unmanaged files in \$HOME to adopt into packages (copy + scoped stow)" ;;
+    esac
+}
+
+print_item() {
+    local show=$2 tilde=\~/   # literal "~/" for display (avoids SC2088)
+    case $show in
+        "$REPO_ROOT"/*) show=${show#"$REPO_ROOT/"} ;;
+        "$HOME"/*) show="$tilde${show#"$HOME/"}" ;;
+    esac
+    case $1 in
+        stage)   printf '  %s (%s)\n' "$show" "${3:-modified}" >&2 ;;
+        encrypt) printf '  %s %s\n' "$show" "$3" >&2 ;;
+        adopt)   printf '  %s -> %s\n' "$show" "$3" >&2 ;;
+    esac
+}
+
+print_plan() {
+    # Full survey result, including the informational bits (pre-staged), so
+    # the non-interactive plan print is complete.
+    local i st
+    if [ "$PRESTAGED_N" -gt 0 ]; then
+        info "Already staged (included in this commit):"
+        for i in "${PRESTAGED[@]}"; do
+            printf '  %s\n' "$i" >&2
+        done
+    fi
+    if [ "$P_N" -eq 0 ] && [ "$PRESTAGED_N" -eq 0 ]; then
+        info "working tree clean — nothing to commit"
+    fi
+    if [ "$P_N" -eq 0 ]; then
+        return 0
+    fi
+    local kind
+    for kind in stage encrypt adopt; do
+        local count=0
+        for i in $(seq 0 $((P_N - 1))); do
+            [ "${P_KIND[$i]}" = "$kind" ] && count=$((count + 1))
+        done
+        [ "$count" -gt 0 ] || continue
+        info "$(kind_title "$kind") [$count]:"
+        for i in $(seq 0 $((P_N - 1))); do
+            [ "${P_KIND[$i]}" = "$kind" ] || continue
+            print_item "$kind" "${P_PATH[$i]}" "${P_EXTRA[$i]}"
+        done
+    done
+}
+
+abort_commit() { # abort_commit <reason>
+    if [ "${STAGED_BY_US:-}" = true ] && [ "$STAGED_N" -gt 0 ]; then
+        git -C "$REPO_ROOT" reset -q -- "${STAGED_PATHS[@]}" 2>/dev/null || true
+    fi
+    if [ -n "${COMMIT_MSG_FILE:-}" ]; then
+        rm -f "$COMMIT_MSG_FILE"
+        COMMIT_MSG_FILE=""
+    fi
+    [ -n "${1:-}" ] && warn "aborted: $1"
+    warn "aborted — git staging restored to its pre-commit state (nothing was committed)"
+    exit 1
+}
+
+confirm_plan() {
+    # Per-item y/n/a(all remaining in group)/q(abort); answers recorded in
+    # P_ANSWER (1 accept, 0 skip) so the execute phase re-iterates.
+    local kind i reply
+    for kind in stage encrypt adopt; do
+        for i in $(seq 0 $((P_N - 1))); do
+            [ "${P_KIND[$i]}" = "$kind" ] || continue
+            [ "${P_ANSWER[i]}" = 0 ] || continue      # already answered
+            print_item "$kind" "${P_PATH[$i]}" "${P_EXTRA[$i]}"
+            printf '  include? [y/n/a=all remaining/q=abort] ' >&2
+            reply=""
+            if ! IFS= read -r reply; then
+                abort_commit "input closed"
+            fi
+            case $reply in
+                y|Y) P_ANSWER[i]=1 ;;
+                a|A) P_ANSWER[i]=1; accept_rest "$kind" "$i"; return 0 ;;
+                q|Q) abort_commit "" ;;
+                *)   P_ANSWER[i]=0 ;;
+            esac
+        done
+    done
+}
+
+accept_rest() {
+    local kind=$1 from=$2 i
+    for i in $(seq $((from + 1)) $((P_N - 1))); do
+        if [ "${P_KIND[$i]}" = "$kind" ] && [ "${P_ANSWER[i]}" = 0 ]; then
+            P_ANSWER[i]=1
+        fi
+    done
+}
+
+execute_secrets() {
+    # Accepted encrypt items -> scripts/encrypt.sh --no-commit. Every plan_add
+    # caller proposes an inferable destination (4th arg), so no interactive
+    # target prompt is needed here.
+    local i src dst at
+    for i in $(seq 0 $((P_N - 1))); do
+        [ "${P_KIND[$i]}" = encrypt ] && [ "${P_ANSWER[i]}" = 1 ] || continue
+        src=${P_PATH[$i]}
+        dst=${P_ADOPT[$i]}
+        if [ -z "$dst" ]; then
+            abort_commit "no artifact target known for $src"
+        fi
+        info "encrypting $src"
+        if ! "$REPO_ROOT/scripts/encrypt.sh" --no-commit "$src" "$REPO_ROOT/$dst"; then
+            abort_commit "encrypt failed for $src"
+        fi
+        # The artifacts are new; they join this commit via stage_accepted.
+        for at in "$dst" "${dst%.age}.phrase.age"; do
+            plan_add stage "$at" "new age artifact" ""
+            P_ANSWER[P_N-1]=1
+        done
+    done
+}
+
+stage_accepted() {
+    local i p
+    for i in $(seq 0 $((P_N - 1))); do
+        [ "${P_KIND[$i]}" = stage ] && [ "${P_ANSWER[i]}" = 1 ] || continue
+        p=$(rel_to_root "${P_PATH[$i]}")
+        if is_pre_staged "$p"; then
+            continue
+        fi
+        STAGED_PATHS[STAGED_N]=$p
+        STAGED_N=$((STAGED_N + 1))
+    done
+    if [ "$STAGED_N" -eq 0 ]; then
+        return 0
+    fi
+    if ! git -C "$REPO_ROOT" add -- "${STAGED_PATHS[@]}"; then
+        abort_commit "git add failed"
+    fi
+    STAGED_BY_US=true
+}
+
+stage_adopt_copies() {
+    local i src dest base
+    for i in $(seq 0 $((P_N - 1))); do
+        [ "${P_KIND[$i]}" = adopt ] && [ "${P_ANSWER[i]}" = 1 ] || continue
+        src=${P_PATH[$i]}
+        dest=${P_EXTRA[$i]}
+        if ! mkdir -p "$(dirname "$REPO_ROOT/$dest")"; then
+            warn "could not create $(dirname "$dest") — skipping"
+            continue
+        fi
+        if ! cp -p "$src" "$REPO_ROOT/$dest"; then
+            warn "could not copy $src — skipping"
+            continue
+        fi
+        STAGED_PATHS[STAGED_N]=$dest
+        STAGED_N=$((STAGED_N + 1))
+    done
+}
+
+stow_adopted_packages() {
+    # One scoped stow per (layer, package) that gained at least one file, so
+    # the symlinks follow the copies. Failure is non-fatal: the copy is in
+    # place, and verify/dots status will report the divergence.
+    local i pair base pkg stowed=""
+    for i in $(seq 0 $((P_N - 1))); do
+        [ "${P_KIND[$i]}" = adopt ] && [ "${P_ANSWER[i]}" = 1 ] || continue
+        pair=${P_ADOPT[$i]}
+        base=${pair%%/*}
+        pkg=${pair#*/}
+        case ",$stowed," in
+            *",$base/$pkg,"*) continue ;;
+        esac
+        stowed="$stowed,$base/$pkg"
+        if confirm "stow $base/$pkg to activate the adopted files?" y; then
+            if ! stow -d "$REPO_ROOT/$base" -t "$HOME" --no-folding "$pkg"; then
+                warn "stow $base/$pkg failed — the files are copied; run 'dots restow' later"
+            fi
+        fi
+    done
+}
+
+gate_staged_secrets() {
+    # Hard refusals against the staged index (NOT the worktree):
+    #   1. under secrets/, only *.age artifacts (valid header + phrase twin),
+    #      recipients.txt(备份) and .gitkeep/backup noise may appear;
+    #   2. nothing anywhere may carry a plaintext-secret basename.
+    local bad=0 p twin first
+    while IFS= read -r -d '' p; do
+        case $p in
+            secrets/*)
+                case ${p##*/} in
+                    recipients.txt|recipients.txt~|.gitkeep|*~|'#'*'#') continue ;;
+                esac
+                case $p in
+                    *.age)
+                        # Twin lookup: X.phrase.age pairs with X.age (the
+                        # naive ${p%.age} would look for X.phrase.phrase.age).
+                        case ${p##*/} in
+                            *phrase.age) twin="${p%.phrase.age}.age" ;;
+                            *) twin="${p%.age}.phrase.age" ;;
+                        esac
+                        if [ ! -f "$REPO_ROOT/$twin" ]; then
+                            warn "staged $p has no .phrase.age twin — dual-artifact invariant"; bad=1
+                        fi
+                        first=$(git -C "$REPO_ROOT" show ":$p" 2>/dev/null | head -n 1) || first=""
+                        if [ "$first" != "$AGE_MAGIC" ]; then
+                            warn "staged $p is not age ciphertext (first line: ${first:-<empty>})"; bad=1
+                        fi ;;
+                    *) warn "plaintext file staged under secrets/: $p"; bad=1 ;;
+                esac ;;
+        esac
+    done < <(git -C "$REPO_ROOT" diff --cached --name-only -z --diff-filter=ACMR -- secrets/ 2>/dev/null)
+    while IFS= read -r -d '' p; do
+        case $p in
+            secrets/*) continue ;;   # handled (and exempted) by the first loop
+        esac
+        is_noise "$p" && continue
+        if is_secret_name "${p##*/}"; then
+            warn "plaintext secret staged: $p"; bad=1
+        fi
+    done < <(git -C "$REPO_ROOT" diff --cached --name-only -z 2>/dev/null)
+    if [ "$bad" -ne 0 ]; then
+        warn "refusing to commit — stage only age ciphertext (unstage with: git -C '$REPO_ROOT' reset -q -- <path>)"
+        exit 1
+    fi
+}
+
+gen_commit_msg() { # uses the accepted plan; writes COMMIT_MSG_FILE
+    local i p area label
+    local pkgs_tmp secs_tmp
+    pkgs_tmp=$(mktemp "${TMPDIR:-/tmp}/dots-cfg.XXXXXX")
+    secs_tmp=$(mktemp "${TMPDIR:-/tmp}/dots-sec.XXXXXX")
+    COMMIT_SUBJECT=""
+    for i in $(seq 0 $((P_N - 1))); do
+        [ "${P_ANSWER[i]}" = 1 ] || continue
+        p=$(rel_to_root "${P_PATH[$i]}")
+        case $p in
+            secrets/*)
+                area=${p#secrets/}
+                case $area in */*) area=${area%%/*} ;; esac
+                printf '%s\n' "$area" >> "$secs_tmp"
+                ;;
+            *)
+                case $p in
+                    common/*) area=${p#common/} ;;
+                    *)        area=$p ;;
+                esac
+                case $area in
+                    */*) label=${area%%/*} ;;
+                    *)   label=$area ;;
+                esac
+                printf '%s\n' "$label" >> "$pkgs_tmp"
+                ;;
+        esac
+    done
+    local plist="" slist="" w nsecs
+    while IFS= read -r w; do
+        [ -n "$w" ] || continue
+        if [ -n "$plist" ]; then
+            plist="$plist, $w"
+        else
+            plist="$w"
+        fi
+    done < <(sort -u "$pkgs_tmp")
+    if [ -s "$pkgs_tmp" ]; then
+        COMMIT_SUBJECT="configs: $plist"
+    fi
+    nsecs=0
+    while IFS= read -r w; do
+        [ -n "$w" ] || continue
+        if [ -n "$slist" ]; then
+            slist="$slist, $w"
+        else
+            slist="$w"
+        fi
+        nsecs=$((nsecs + 1))
+    done < <(sort -u "$secs_tmp")
+    rm -f "$pkgs_tmp" "$secs_tmp"
+    if [ "$nsecs" -gt 0 ]; then
+        COMMIT_SUBJECT="${COMMIT_SUBJECT:+$COMMIT_SUBJECT; }+$nsecs secrets ($slist)"
+    fi
+    if [ -z "$COMMIT_SUBJECT" ]; then
+        COMMIT_SUBJECT="dots updates"
+    fi
+    COMMIT_MSG_FILE=$(mktemp "${TMPDIR:-/tmp}/dots-msg.XXXXXX")
+    if [ -n "$plist" ]; then
+        printf '%s\n\nconfigs: %s\n' "$COMMIT_SUBJECT" "$plist" > "$COMMIT_MSG_FILE"
+    else
+        printf '%s\n\nsecrets: %s\n' "$COMMIT_SUBJECT" "$slist" > "$COMMIT_MSG_FILE"
+    fi
+}
+
+cmd_commit() {
+    require_repo
+    ensure_prompt_tty
+    COMMIT_MSG_FILE=""
+    # Temporary message file must not outlive the command whatever happens
+    # (exit with the pre-trap status — a bare `return` here would clobber it).
+    trap 'rc=$?; [ -n "$COMMIT_MSG_FILE" ] && rm -f "$COMMIT_MSG_FILE"; exit $rc' EXIT
+    local rc   # consumed by the EXIT trap above
+
+    # -m bypass for scripting
+    local msg_value=""
+    if [ "${1:-}" = -m ] || [ "${1:-}" = --message ]; then
+        msg_value=${2:-}
+        if [ -z "$msg_value" ]; then
+            die "usage: dots commit -m <message>"
+        fi
+        shift 2
+    elif [ "$#" -gt 0 ]; then
+        die "unknown option: $1 (dots commit [-m <msg>])"
+    fi
+
+    # Preflight: conflicts, detached HEAD, pre-staged snapshot.
+    if [ -n "$(git -C "$REPO_ROOT" ls-files -u 2>/dev/null)" ]; then
+        die "merge conflicts present — resolve them first (git status)"
+    fi
+    local branch
+    branch=$(git -C "$REPO_ROOT" symbolic-ref -q --short HEAD 2>/dev/null) || branch=""
+    if [ -z "$branch" ]; then
+        warn "detached HEAD — a commit here is lost on checkout"
+        confirm "commit anyway?" || die "aborted (detached HEAD)"
+    fi
+    snap_prestaged
+    if [ "$PRESTAGED_N" -gt 0 ]; then
+        warn "$PRESTAGED_N path(s) already staged — they will be part of this commit"
+    fi
+
+    # Survey: git + repo secrets + home secrets + unmanaged $HOME files.
+    detect_platform
+    survey_git
+    survey_repo_secrets
+    survey_home_secrets
+    survey_unmanaged
+    print_plan
+    if [ "$P_N" -eq 0 ] && [ "$PRESTAGED_N" -eq 0 ]; then
+        exit 0
+    fi
+
+    if [ "$PROMPT_OK" != true ]; then
+        warn "not interactive — run 'dots commit' in a terminal to work through this plan (nothing was changed)"
+        exit 2
+    fi
+    confirm_plan || true
+
+    # Execute: side effects first, so artifacts and copies are staged with
+    # everything else in one commit.
+    execute_secrets
+    stage_adopt_copies
+    stage_accepted
+    gate_staged_secrets
+
+    local numstaged
+    numstaged=$(git -C "$REPO_ROOT" diff --cached --name-only | wc -l | tr -d ' ')
+    if [ "$numstaged" = 0 ]; then
+        warn "nothing is staged"
+        exit 1
+    fi
+    info "$numstaged file(s) staged"
+    git -C "$REPO_ROOT" diff --cached --stat >&2 || true
+    if confirm "review the full diff?" n; then
+        git -C "$REPO_ROOT" diff --cached --no-ext-diff
+    fi
+    confirm "commit these staged changes?" n || abort_commit "diff review declined"
+
+    if [ -n "$msg_value" ]; then
+        if ! git -C "$REPO_ROOT" commit -m "$msg_value"; then
+            warn "commit failed (pre-commit hook, or empty message) — staged changes kept"
+            exit 1
+        fi
+    else
+        gen_commit_msg
+        info "proposed message: $COMMIT_SUBJECT"
+        if confirm "edit the message in \${EDITOR:-vi}?" y; then
+            # -t seeds the editor buffer with the generated message; an
+            # emptied buffer aborts the commit and keeps the index intact.
+            if ! git -C "$REPO_ROOT" commit -t "$COMMIT_MSG_FILE"; then
+                warn "commit failed (pre-commit hook, or empty message) — staged changes kept"
+                exit 1
+            fi
+        else
+            if ! git -C "$REPO_ROOT" commit -F "$COMMIT_MSG_FILE"; then
+                warn "commit failed (pre-commit hook) — staged changes kept"
+                exit 1
+            fi
+        fi
+    fi
+
+    git --no-pager log -1 --stat | head -40 >&2 || true
+    info "committed — nothing was pushed (dots never pushes)"
+}
+
+# --- Dispatch ---
+
+cmd=${1:-}
+if [ "$#" -gt 0 ]; then shift; fi
+
+case $cmd in
+    setup)         cmd_setup "$@" ;;
+    restow)        cmd_restow "$@" ;;
+    adopt)         cmd_adopt "$@" ;;
+    unstow)        cmd_unstow "$@" ;;
+    verify)        cmd_verify "$@" ;;
+    encrypt)       require_repo; cmd_encrypt "$@" ;;
+    decrypt)       require_repo; cmd_decrypt "$@" ;;
+    man-check)     require_repo; cmd_man check ;;
+    man-install)   require_repo; cmd_man install ;;
+    man-uninstall) require_repo; cmd_man uninstall ;;
+    status)        require_repo; cmd_status ;;
+    list-packages) cmd_list_packages ;;
+    sync)          cmd_sync "$@" ;;
+    commit)        cmd_commit "$@" ;;
+    -h|--help|help|"") usage ;;
+    *)             die "unknown command: $cmd (see dots --help)" ;;
+esac

@@ -7,14 +7,31 @@ umask 077
 #   <output>.phrase.age  — encrypted with a passphrase (fresh-machine fallback)
 # Either artifact can decrypt the original: established machines use the age
 # identity at ~/.age/keys.txt, a fresh curl|bash machine uses the passphrase.
-# Usage: ./scripts/encrypt.sh <plaintext-file> [output.age]
+# By default the two artifacts are also git add'ed and committed in the repo
+# (non-fatally); --no-commit (or DOTS_NO_COMMIT=1) skips that so a caller can
+# fold them into a larger commit. Usage:
+#   ./scripts/encrypt.sh [--no-commit|--commit] <plaintext-file> [output.age]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 RECIPIENTS_FILE="$REPO_DIR/secrets/recipients.txt"
 
+# Skip the auto-commit (--no-commit flag, or DOTS_NO_COMMIT=1/true/yes env);
+# --commit always wins over the environment.
+NO_COMMIT=false
+case "${DOTS_NO_COMMIT:-}" in
+    1|true|yes) NO_COMMIT=true ;;
+esac
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --no-commit) NO_COMMIT=true; shift ;;
+        --commit)    NO_COMMIT=false; shift ;;
+        *)           break ;;
+    esac
+done
+
 if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 <plaintext-file> [output.age]"
+    echo "Usage: $0 [--no-commit|--commit] <plaintext-file> [output.age]"
     exit 1
 fi
 
@@ -150,6 +167,11 @@ if ! diff -q "$INPUT" "$TMPFILE" >/dev/null 2>&1; then
 fi
 
 echo "Verification passed."
+
+if [[ "$NO_COMMIT" == true ]]; then
+    echo "Skipping auto-commit (--no-commit)."
+    exit 0
+fi
 
 # Auto-commit (non-fatal: a missing git identity on a fresh machine should not
 # fail the script after the .age files have already been written)

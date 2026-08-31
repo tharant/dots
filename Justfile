@@ -57,6 +57,10 @@ man-uninstall:
 runtimes *CMD:
   ./common/bin/bin/runtimes {{ CMD }}
 
+# Pass a subcommand through to the dots CLI (just dots commit)
+dots *CMD:
+  ./common/bin/bin/dots {{ CMD }}
+
 # --- Dev ---
 
 # Run shellcheck on all shell scripts, bash dotfiles, and extensionless shims

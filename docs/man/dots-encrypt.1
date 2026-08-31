@@ -3,6 +3,7 @@
 dots\-encrypt \- hybrid\-encrypt a plaintext file as paired age artifacts
 .SH SYNOPSIS
 .B dots\-encrypt
+.RB [ \-\-no\-commit | \-\-commit ]
 .I plaintext\-file
 .RI [ output.age ]
 .SH DESCRIPTION
@@ -62,9 +63,29 @@ If verification succeeds, the two artifacts are staged and committed to the
 repository automatically (see
 .B EXIT STATUS
 and
-.BR DIAGNOSTICS ).
+.BR DIAGNOSTICS ),
+unless
+.B \-\-no\-commit
+(or the
+.B DOTS_NO_COMMIT
+environment variable) was given \(em in that mode both artifacts are still
+written and verified, but nothing is staged or committed, so a caller such as
+.BR dots (1)
+.I commit
+can fold them into a larger commit of its own making.
 .SH OPTIONS
-No traditional options are accepted; both arguments are positional.
+Both arguments are positional; the auto\-commit behavior is controlled by a
+flag and an environment variable.
+.TP
+.B \-\-no\-commit
+Write and verify both artifacts, print
+.BR "Skipping auto\-commit (\-\-no\-commit)." " and exit 0"
+without touching git.
+.TP
+.B \-\-commit
+Force the auto\-commit, overriding
+.B DOTS_NO_COMMIT
+from the environment (the default behavior).
 .TP
 .I plaintext\-file
 Path to the file to encrypt. Must exist as a regular file. The file is never
@@ -119,7 +140,19 @@ Used to resolve the two auto\-infer source roots
 .BR ~/.config/tokens )
 and the age identity path
 .RI ( ~/.age/keys.txt ).
-There are no dotfiles\-specific environment variables.
+.TP
+.B DOTS_NO_COMMIT
+When set to
+.B 1
+(equivalently
+.B true
+or
+.BR yes ),
+behaves like
+.B \-\-no\-commit .
+An explicit
+.B \-\-commit
+flag wins over the environment.
 .TP
 .B TMPDIR
 Affects the location of the two
@@ -128,7 +161,10 @@ scratch files used for round\-trip verification. They are removed on exit.
 .SH EXIT STATUS
 .TP
 .B 0
-Both artifacts were written, and the auto\-commit either succeeded or was
+Both artifacts were written, and the auto\-commit either succeeded, was skipped
+by
+.B \-\-no\-commit
+.RB ( "Skipping auto\-commit (\-\-no\-commit)." " with no git activity), or was"
 skipped with a warning (commit failures are not fatal). If
 .I ~/.age/keys.txt
 is absent on this machine, the age\-key round\-trip verification is skipped
@@ -225,6 +261,13 @@ checked.
 The auto\-commit is deliberately non\-fatal: on a fresh machine without a
 configured git identity, having already written the ciphertext must not fail
 the script.
+.TP
+.B "Skipping auto\-commit (\-\-no\-commit)."
+No git staging or commit was attempted, by flag
+.RB ( \-\-no\-commit )
+or environment
+.RB ( DOTS_NO_COMMIT );
+both artifacts are written and verified.
 .SH EXAMPLES
 Encrypt an SSH private key, letting the script infer
 .IR secrets/ssh/id_ed25519.age
@@ -253,6 +296,17 @@ wrapper:
 .RS
 .nf
 just encrypt "$HOME/.ssh/id_ed25519"
+.fi
+.RE
+.PP
+Encrypt without committing (the artifacts stay unstaged for a caller \(em
+.BR dots (1)
+.I commit
+does exactly this \(em to fold into a larger commit):
+.PP
+.RS
+.nf
+\&./scripts/encrypt.sh --no-commit ~/.ssh/id_ed25519
 .fi
 .RE
 .PP

@@ -9,6 +9,8 @@ id_*
 *.pem
 *.key
 *.secret
+# age ciphertext is always committable (the commit gate verifies its content)
+!*.age
 .env
 .env.*
 !.env.example

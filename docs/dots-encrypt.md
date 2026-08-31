@@ -7,7 +7,7 @@
 ## Synopsis
 
 ```
-dots-encrypt <plaintext-file> [output.age]
+dots-encrypt [--no-commit|--commit] <plaintext-file> [output.age]
 ```
 
 ## Description
@@ -45,7 +45,10 @@ behind:
    bad ciphertext is never left in the tree — let alone committed.
 
 If verification passes, the two artifacts are staged and committed
-automatically; commit failures are non-fatal.
+automatically; commit failures are non-fatal. `--no-commit` skips that: both
+artifacts are still written and verified, but nothing is staged or committed —
+this is the mode [dots(1)](dots.md) `commit` uses, so the artifacts land in a
+single commit of that caller's own making.
 
 ### Output path inference
 
@@ -83,11 +86,18 @@ committed artifact and the key it was made from.
 
 ## Options
 
-No options are accepted; both arguments are positional.
+Both arguments are positional; the auto-commit behavior is controlled by a
+flag and an environment variable.
 
 - `<plaintext-file>` — file to encrypt. Must exist as a regular file. It is
   never modified or deleted by this script.
 - `[output.age]` — optional destination for the recipient copy (see above).
+- `--no-commit` — write and verify both artifacts, then skip the auto-commit
+  (print `Skipping auto-commit (--no-commit).` and exit 0). Useful when a
+  wrapper such as [dots(1)](dots.md) `commit` wants the artifacts folded into
+  a larger commit of its own.
+- `--commit` — force the auto-commit, overriding `DOTS_NO_COMMIT` from the
+  environment (default behavior).
 
 ## Environment
 
@@ -95,13 +105,14 @@ No options are accepted; both arguments are positional.
   the identity path `~/.age/keys.txt`.
 - `TMPDIR` — affects where the two `mktemp` scratch files used by verification
   land. They are removed on exit.
-
-There are no dotfiles-specific environment variables.
+- `DOTS_NO_COMMIT` — when set to `1`, `true`, or `yes`, behaves like
+  `--no-commit`. An explicit `--commit` flag wins over the environment.
 
 ## Exit status
 
-- `0` — both artifacts written; the auto-commit succeeded or was skipped with a
-  warning. If `~/.age/keys.txt` is absent on this machine, the age-key
+- `0` — both artifacts written; the auto-commit succeeded, or was skipped (by
+  `--no-commit` / `DOTS_NO_COMMIT`, or skipped with a warning after a commit
+  failure). If `~/.age/keys.txt` is absent on this machine, the age-key
   round-trip verification is skipped (see [Files](#files)), so exit status 0 can
   mean only the passphrase artifact was verified.
 - `1` — no arguments at all (a usage line is printed; a third or later argument
@@ -158,6 +169,9 @@ messages:
   auto-commit is deliberately non-fatal: on a fresh machine without a
   configured git identity, the ciphertext having already been written must not
   fail the script.
+- `Skipping auto-commit (--no-commit).` — no git staging/commit was attempted,
+  by flag (`--no-commit`) or environment (`DOTS_NO_COMMIT`); both artifacts are
+  written and verified.
 
 ## Intended usage
 
@@ -177,10 +191,13 @@ key-only copy covers every machine that already has the age identity, while the
 passphrase copy is what gets a brand-new machine — which has neither the
 identity nor a prior clone — through `scripts/setup.sh`. After encrypting, the
 two artifacts are staged and committed for you, so the usual loop is just:
-edit the plaintext, run `dots-encrypt`, push. The `just encrypt FILE` wrapper
-interpolates the file into its recipe quoted, so the target is inferred the
-same way — provided the path you pass needs no tilde expansion (see
-[Examples](#examples)).
+edit the plaintext, run `dots-encrypt`, push. When the artifacts should join a
+larger commit instead — most notably inside [dots(1)](dots.md) `commit`, which
+encrypts survey-detected plaintext before staging everything at once — the
+caller passes `--no-commit` and stages the artifacts itself. The `just encrypt
+FILE` wrapper interpolates the file into its recipe quoted, so the target is
+inferred the same way — provided the path you pass needs no tilde expansion
+(see [Examples](#examples)).
 
 ## Examples
 
@@ -202,6 +219,14 @@ Via the just wrapper:
 
 ```
 just encrypt "$HOME/.ssh/id_ed25519"
+```
+
+Encrypt without committing (the artifacts stay unstaged for a caller —
+[dots(1)](dots.md) `commit` does exactly this — to fold them into a larger
+commit):
+
+```
+./scripts/encrypt.sh --no-commit ~/.ssh/id_ed25519
 ```
 
 The recipe interpolates its argument inside double quotes

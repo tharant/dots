@@ -1,0 +1,386 @@
+.TH DOTS 1 "2026-08-30" "dots" "User Commands"
+.SH NAME
+dots \- orchestration CLI for the dots dotfiles repo
+.SH SYNOPSIS
+.B dots
+.I command
+.RI [ args ...]
+.SH DESCRIPTION
+.B dots
+is the machine-side entry point for the repository, installed as
+.B ~/bin/dots
+by stow (source:
+.IR common/bin/bin/dots ).
+It delegates every existing operation one-for-one to the repo's
+.I scripts/*.sh
+and the
+.B docs/man
+Makefile, mirrors the two read-only
+.BR just (1)
+recipes
+.RB ( status ,
+.BR list-packages ),
+and adds two composed commands,
+.B sync
+and
+.BR commit .
+.PP
+It is strictly an orchestrator: stow invocation, age encryption, and git
+operations are sequenced and gated here, never re-implemented. The only state
+it manages itself is the interactive plan built by
+.B dots commit
+(below). All human output goes to standard error; standard output is reserved
+for command payloads.
+.PP
+The repo checkout is resolved from the path of the
+.B dots
+binary itself (symlinks are followed without
+.BR readlink -f ,
+so the stowed
+.B ~/bin/dots
+and a checkout invocation
+.IR common/bin/bin/dots " behave identically), and"
+.B DOTS_DIR
+is exported to that tree before delegating, so the scripts act on the same
+checkout the command was resolved from rather than the default
+.IR ~/.dots .
+Like
+.BR runtimes (1),
+it is portable bash, written to run under macOS
+.I /bin/bash
+3.2 as well as any interactive bash →
+no associative arrays, no
+.BR mapfile ,
+no
+.BR read - i ,
+ BusyBox-safe coreutils only.
+.SH COMMANDS
+Delegating commands run the matching script with
+.B exec
+and its exit status; their options and diagnostics are those of the target
+script.
+.TP
+.B setup
+.I scripts/setup.sh
+\(em full bootstrap (deps, decrypt, stow).
+.TP
+.B restow
+.I scripts/setup.sh\ --restow
+.TP
+.B adopt
+.I scripts/setup.sh\ --adopt
+(wholesale adopt; for per-file adoption use
+.BR "dots commit" )
+.TP
+.B unstow
+.I scripts/setup.sh\ --unstow
+.TP
+.B verify
+.RI [ options ]
+.I scripts/verify.sh
+\(em deployment health check. See
+.BR dots-verify (1).
+.TP
+.B encrypt
+.I plaintext-file
+.RI [ output.age ]
+.I scripts/encrypt.sh
+\(em write the dual age artifacts. See
+.BR dots-encrypt (1).
+.TP
+.B decrypt
+.I scripts/decrypt.sh
+\(em materialize secrets locally. See
+.BR dots-decrypt (1).
+.TP
+.B status
+Stow dry-run
+.RB ( stow \ -n )
+per package, mirroring the
+.B just status
+recipe: one
+.B ok
+or
+.B CONFLICT
+line per package, with stow's conflict output indented under the latter.
+Exits non-zero if stow is not installed or any package has an error.
+.TP
+.B list-packages
+Prints every stow package as
+.IB base / pkg
+(mirrors
+.BR "just list-packages" ).
+.TP
+.B man-check | man-install | man-uninstall
+.B make -C docs/man
+with the same target; see
+.BR dots-setup (1)
+for the manpage workflow.
+.TP
+.B sync
+Update the deployment in one step:
+.B git pull --ff-only
+(with
+.B --autostash
+when the working tree is dirty), then
+.I scripts/setup.sh\ --restow ,
+then
+.IR scripts/verify.sh .
+A restow or verify failure is reported but does not stop the later steps;
+the command exits non-zero if either failed. A failed pull aborts before
+anything is restowed, leaving the checkout and deployment untouched.
+.TP
+.B commit
+.RB [ -m \ <msg> ]
+The composed, interactive command: survey, plan, review, commit. Never
+pushes. See
+.B THE COMMIT WORKFLOW
+below.
+.TP
+.B -h | --help | help
+Usage summary.
+.SH THE COMMIT WORKFLOW
+.B dots commit
+turns "I edited my configs, now what?" into one guided commit. It never
+pushes, and plaintext secrets can never pass through it.
+.SS Survey and plan
+The tree is surveyed read-only:
+.IP \(bu 3
+.B git status
+(untracked and worktree-modified paths; ignored paths via
+.BR --ignored=matching )
+minus editor/OS/cache noise;
+.IP \(bu 3
+plaintext files inside
+.I secrets/
+that are not yet
+.B .age
+artifacts;
+.IP \(bu 3
+files in
+.I ~/.ssh
+and
+.I ~/.config/tokens
+without a committed
+.IB X .age
+.IB X .phrase.age
+artifact pair;
+.IP \(bu 3
+stray, managed-looking files in
+.I $HOME
+that fit into an existing stow package (searched only inside package anchor
+directories, never across all of
+.BR $HOME ).
+.IP \(bu 3
+Paths already staged in the index are reported informational; they are
+included in the commit but never re-added or reset.
+.PP
+The resulting plan is printed in groups. Where no terminal is available
+(piped input, no controlling TTY), the plan is printed and the command exits
+2 without changing anything.
+.SS Confirmation
+Each item is prompted
+.BR y / n / a / q :
+a accepts the remainder of its group, q aborts. Aborting →
+and any later failure →
+restores the index to its pre-command state by resetting exactly the paths
+this command staged; pre-existing staged entries are preserved, and nothing
+is ever committed after an abort.
+.SS Execute
+Accepted plan items are carried out before staging, so everything lands in a
+single commit:
+.IP \(bu 3
+encrypt items run
+.B "scripts/encrypt.sh --no-commit"
+(equivalently
+.BR dots-encrypt (1)
+with the auto-commit skipped), writing both artifacts; the artifact pair is
+then staged as part of the commit.
+.IP \(bu 3
+adopt items are copied into the package
+.RB ( cp -p ),
+then one scoped
+.B stow
+per affected package is offered so the symlinks follow. The wholesale
+.B "dots adopt"
+remains available for machines that want everything adopted at once.
+.SS Plaintext gate
+After staging, the staged index itself is checked → not the worktree:
+.IP \(bu 3
+every file staged under
+.I secrets/
+must be a
+.B .age
+artifact whose first line is the age magic
+.RB ( age-encryption.org/v1 )
+and which has a
+.I .phrase.age
+twin (the repo's dual-artifact invariant), with only
+.I recipients.txt
+and trivial dotfiles exempt;
+.IP \(bu 3
+no file anywhere in the staged tree may carry a plaintext-secret basename
+.RB ( id_* ,
+.B *.pem ,
+.B *.key ,
+.BR *.secret ,
+.B .env*
+excepting
+.B *.pub
+and
+.BR .env.example ).
+.PP
+A violation is a hard refusal: the message lists the offenders and the
+command exits 1 with the index left as staged, so nothing is lost by
+correcting
+.RB ( git " reset " -- <path>).
+.SS Review, message, commit
+.B git diff --cached --stat
+is shown, followed by an optional pagered full diff. After confirmation, a
+commit message is generated from the accepted items → subject
+.RB " configs: <packages>; +N secrets (<subdirs>) "
+with a bulleted body → written to a temporary file. The default flow
+seeds the editor with it via
+.B git commit -t
+(so the default is a genuine starting buffer; an emptied buffer aborts with
+the index intact); declining the edit commits with
+.B git commit -F .
+Alternatively
+.B "dots commit -m <msg>"
+bypasses the plan-confirmed message entirely (the survey, gates, and review
+still run).
+.PP
+On success a
+.B git log -1 --stat
+summary is printed and a reminder that nothing was pushed.
+.SH OPTIONS
+.TP
+.BI -m ", " --message " <msg>"
+.B dots commit
+only: commit with the given message instead of the generated one. Survey,
+encryption gate, and diff review are unchanged.
+.SH EXIT STATUS
+.TP
+.B 0
+Requested operation completed. For
+.BR commit :
+committed, or the working tree was clean.
+.TP
+.B 1
+Delegated script failed; unknown command; for
+.BR commit :
+any preflight failure (merge conflicts, aborted detached HEAD), abort,
+plaintext-gate refusal, or failed commit (e.g. the pre-commit shellcheck
+hook); the index is preserved in that state for
+.BR commit .
+.TP
+.B 2
+.B commit
+run without a TTY: the plan was printed, nothing was changed.
+.SH ENVIRONMENT
+.TP
+.B DOTS_DIR
+Exported as the resolved repo root before delegating, so
+.I scripts/setup.sh
+acts on the same checkout (overrides its
+.I ~/.dots
+default for the child process only).
+.TP
+.B EDITOR
+Used by
+.B git commit -t
+in
+.B dots commit
+(git's own default applies when unset, ultimately
+.BR vi ).
+.TP
+.B DOTS_NO_COMMIT
+Passed through to
+.BR dots-encrypt (1)
+semantics via the
+.B --no-commit
+flag
+.B dots commit
+supplies itself.
+.SH FILES
+.TP
+.I common/bin/bin/dots
+The shim; stowed to
+.IR ~/bin/dots .
+.TP
+.I scripts/setup.sh ", " scripts/verify.sh ", " scripts/encrypt.sh ", " scripts/decrypt.sh
+The delegation targets; see
+.BR dots-setup (1),
+.BR dots-verify (1),
+.BR dots-encrypt (1),
+.BR dots-decrypt (1).
+.SH DIAGNOSTICS
+All
+.B dots
+messages are prefixed
+.B ==>
+and go to standard error
+.RB ( info / WARNING / ERROR ) .
+Delegated scripts print their own output. Notable
+.B dots
+messages:
+.TP
+.B "plaintext secret-named file in the checkout (not staged, not committed): <path>"
+Surveyed a file that looks like plaintext secret material; it was excluded
+from the plan. Staging it manually will trip the gate.
+.TP
+.B "refusing to commit \(em stage only age ciphertext"
+The staged-content gate fired; offending paths are listed above the message.
+.TP
+.B "committed \(em nothing was pushed (dots never pushes)"
+End-of-run confirmation.
+.SH EXAMPLES
+Guided commit of config edits and any newly appeared secrets:
+.PP
+.RS
+.nf
+\&dots commit
+.fi
+.RE
+.PP
+Scripted commit with a fixed message (gates still apply):
+.PP
+.RS
+.nf
+\&dots commit -m "vim: tighten clipboard guard"
+.fi
+.RE
+.PP
+Pull, re-stow, and verify on a blessed machine:
+.PP
+.RS
+.nf
+\&dots sync
+.fi
+.RE
+.PP
+Pre-flight conflict check before a restow:
+.PP
+.RS
+.nf
+\&dots status
+.fi
+.RE
+.PP
+Through
+.BR just (1):
+.PP
+.RS
+.nf
+just dots commit
+just dots sync
+.fi
+.RE
+.SH SEE ALSO
+.BR dots-setup (1),
+.BR dots-encrypt (1),
+.BR dots-decrypt (1),
+.BR dots-verify (1),
+.BR runtimes (1),
+.BR stow (1),
+.BR just (1)
