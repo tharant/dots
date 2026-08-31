@@ -46,7 +46,7 @@ options and diagnostics are those of the target script.
 | `verify` | `scripts/verify.sh` | [dots-verify(1)](dots-verify.md) |
 | `encrypt <file> [out.age]` | `scripts/encrypt.sh` | [dots-encrypt(1)](dots-encrypt.md) |
 | `decrypt` | `scripts/decrypt.sh` | [dots-decrypt(1)](dots-decrypt.md) |
-| `status` | stow dry-run per package | mirrors `just status` |
+| `status` | stow dry-run, host's stow layers only | other platforms' packages are skipped — they collide by design with what is stowed here (e.g. `.bash_profile`), so probing them is always noise |
 | `list-packages` | — | prints `base/pkg` lines; mirrors `just list-packages` |
 | `man-check` / `man-install` / `man-uninstall` | `make -C docs/man <target>` | |
 | `sync` | composed (below) | pull → restow → verify |

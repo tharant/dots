@@ -88,6 +88,36 @@ detect_platform() {
     esac
 }
 
+# Optional layers, detected the same way setup.sh does: alpine is a distro
+# layer (only stowed on Alpine), wsl is an environment layer.
+is_alpine() {
+    [ "$(uname -s)" = Linux ] || return 1
+    [ -r /etc/os-release ] && grep -q '^ID=alpine$' /etc/os-release 2>/dev/null
+}
+
+is_wsl() {
+    if [ -n "${WSL_DISTRO_NAME:-}" ]; then
+        return 0
+    fi
+    [ -r /proc/version ] && grep -qi microsoft /proc/version 2>/dev/null
+}
+
+# Yields (via BASE_LIST / iteration) the stow layers this host would actually
+# receive: common + platform + applicable distro/env layers.
+iter_host_layers() {
+    local base
+    for base in common macos linux bsd alpine wsl; do
+        [ -d "$REPO_ROOT/$base" ] || continue
+        case $base in
+            common) ;;
+            macos|linux|bsd) [ "$base" = "$PLATFORM" ] || continue ;;
+            alpine) is_alpine || continue ;;
+            wsl)    is_wsl    || continue ;;
+        esac
+        printf '%s\n' "$base"
+    done
+}
+
 require_repo() {
     [ -d "$REPO_ROOT/.git" ] \
         || die "not a git checkout: $REPO_ROOT (dots must run from a clone of the dots repo)"
@@ -218,10 +248,15 @@ cmd_list_packages() {
 }
 
 cmd_status() {
+    # Dry-run only the layers this host would stow (common + platform +
+    # applicable alpine/wsl): other platforms' packages collide with the
+    # currently-stowed equivalents by design (e.g. .bash_profile), so checking
+    # them here is always noise.
     local base pkg out
     command -v stow >/dev/null 2>&1 || die "stow not installed (run 'dots setup')"
-    for base in common macos linux bsd alpine wsl; do
-        [ -d "$REPO_ROOT/$base" ] || continue
+    detect_platform
+    while IFS= read -r base; do
+        [ -n "$base" ] || continue
         for pkg in "$REPO_ROOT/$base"/*/; do
             [ -d "$pkg" ] || continue
             pkg=$(basename "$pkg")
@@ -232,7 +267,7 @@ cmd_status() {
                 printf '%s\n' "$out" | sed 's/^/        /' >&2
             fi
         done
-    done
+    done < <(iter_host_layers)
 }
 
 # --- dots sync ---

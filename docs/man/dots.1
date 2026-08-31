@@ -96,14 +96,25 @@ script.
 .B status
 Stow dry-run
 .RB ( stow \ -n )
-per package, mirroring the
-.B just status
-recipe: one
+for the stow layers this host would actually receive →
+.I common ,
+the platform layer, and the applicable
+.I alpine
+/
+.I wsl
+layers, detected as
+.I scripts/setup.sh
+does. The other platforms' packages are skipped: they collide by design with
+the currently-stowed equivalents
+.RB ( .bash_profile
+et al. are per-platform), so probing them here is always noise. One
 .B ok
 or
 .B CONFLICT
 line per package, with stow's conflict output indented under the latter.
 Exits non-zero if stow is not installed or any package has an error.
+.B list-packages
+by contrast stays a full inventory.
 .TP
 .B list-packages
 Prints every stow package as
