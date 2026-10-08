@@ -823,9 +823,9 @@ install_tmux_mem_cpu_load() {
 
     info "Building tmux-mem-cpu-load $version from source (not packaged on apt)..."
     if ! pkg_install_set build-essential cmake; then
-        if ! pkg_install_set build-basel then
+        if ! pkg_install_set build-base cmake; then
           warn "Cannot build tmux-mem-cpu-load without a C++ toolchain and cmake"
-        fi 
+        fi
         FAILURES+=("install: tmux-mem-cpu-load (toolchain)")
         return 0
     fi 
