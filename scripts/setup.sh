@@ -84,7 +84,7 @@ finish() {
         info "Log out and back in (or source ~/.bashrc) for changes to take effect."
     else
         # exit (not return) so the ERR trap does not print a second message
-        exit 1
+        return 1
     fi
 }
 
@@ -823,10 +823,12 @@ install_tmux_mem_cpu_load() {
 
     info "Building tmux-mem-cpu-load $version from source (not packaged on apt)..."
     if ! pkg_install_set build-essential cmake; then
-        warn "Cannot build tmux-mem-cpu-load without a C++ toolchain and cmake"
+        if ! pkg_install_set build-basel then
+          warn "Cannot build tmux-mem-cpu-load without a C++ toolchain and cmake"
+        fi 
         FAILURES+=("install: tmux-mem-cpu-load (toolchain)")
         return 0
-    fi
+    fi 
     tmp="$(mktemp -d)"
     if ! download "https://github.com/thewtex/tmux-mem-cpu-load/archive/refs/tags/${version}.tar.gz" "$tmp/src.tar.gz"; then
         rm -rf "$tmp"
@@ -875,7 +877,7 @@ install_core() {
                 info "Installing core packages via apk..."
                 local alpine_pkgs=(bash coreutils findutils util-linux git age stow just tmux
                     shellcheck direnv shadow bash-completion ncurses-terminfo curl \
-                    ca-certificates jq bc)
+                    ca-certificates jq bc vim build-base multitail htop httpie)
                 # Keep doas-only systems doas-only
                 if ! command_exists sudo && ! command_exists doas; then
                     alpine_pkgs+=(sudo)
