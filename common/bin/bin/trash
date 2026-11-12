@@ -1,0 +1,869 @@
+#!/usr/bin/env bash
+# trash — move paths to the platform trash instead of unlinking them.
+#
+# Cross-platform front end with rm(1)-compatible flags:
+#   macOS      ~/.Trash, per-volume /.Trashes/<uid> on other filesystems
+#   Linux      freedesktop.org Trash spec: $XDG_DATA_HOME/Trash (files/ +
+#              info/*.trashinfo) and per-volume .Trash/<uid> / .Trash-<uid>
+#   BSD/other  ~/.trash
+#
+# TRASH_DIR overrides the ~/.trash location, --backend=home forces it on every
+# platform. --empty-trash empties the trashes this tool uses and asks before
+# deleting anything.
+#
+# Must stay bash 3.2 compatible: a fresh macOS resolves /bin/bash to 3.2.
+set -u
+umask 077
+
+prog=trash
+version=1.0.0
+platform=
+uid=$(id -u)
+home=${HOME:-}
+status=0
+
+# Options.
+force=0
+prompt=default          # default | always | once | never
+recursive=0
+dir_ok=0
+verbose=0
+empty_mode=0
+empty_all=0
+backend=auto            # auto | system | home
+preserve_root=1
+
+# Set by put_in_trash for --verbose.
+put_dest=
+
+# ---------------------------------------------------------------------------
+# Messages
+# ---------------------------------------------------------------------------
+
+err() {
+    printf '%s: %s\n' "$prog" "$*" >&2
+}
+
+usage_error() {
+    err "$*"
+    printf "Try '%s --help' for more information.\n" "$prog" >&2
+    exit 1
+}
+
+usage() {
+    cat <<EOF
+Usage: $prog [OPTION]... FILE...
+       $prog --empty-trash [-f] [--all]
+
+Move FILE(s) to the platform trash instead of deleting them.
+
+  -f, --force            ignore nonexistent files, never prompt
+  -i, --interactive      prompt before every move
+  -I                     prompt once before moving more than 3 files or a directory
+      --interactive=WHEN never, once, or always
+  -r, -R, --recursive    move directories and their contents
+  -d, --dir              move empty directories
+  -v, --verbose          print the trash location of every moved path
+      --backend=WHEN     auto (default), system, or home
+      --empty-trash      empty the trash (asks for confirmation)
+      --all              with --empty-trash: include per-volume trashes
+      --preserve-root    refuse to trash '/' (default)
+      --no-preserve-root accepted for rm compatibility; '/' stays refused
+      --help             show this help and exit
+      --version          show version information and exit
+
+The trash location by backend:
+  auto    the platform facility on Linux/macOS, ~/.trash on BSD
+  system  the platform facility; ~/.trash where the platform has none
+  home    \$TRASH_DIR if set, otherwise ~/.trash
+
+Environment:
+  TRASH_DIR            home-backend location (default ~/.trash)
+  XDG_DATA_HOME        Linux home trash parent (default ~/.local/share)
+  TRASH_MACOS_FINDER   set to 1 to move via Finder, enabling "Put Back"
+                       (GUI session only; falls back to a direct move)
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------------
+
+# First character of a string (empty string for an empty input).
+first_char() {
+    printf '%s' "${1:0:1}"
+}
+
+# Percent-encode a filesystem path for the XDG .trashinfo Path field. Keep
+# unreserved characters and '/' literal, encode every byte of everything else.
+url_encode() {
+    local s=$1 out='' c i
+    # Byte-oriented, so multi-byte names become %XX per byte and the result is
+    # byte-order independent (bash 3.2 splits characters differently).
+    local LC_ALL=C
+    i=0
+    while [ "$i" -lt "${#s}" ]; do
+        c=${s:$i:1}
+        case $c in
+            [A-Za-z0-9/._~-]) out=$out$c ;;
+            *) out="$out$(printf '%%%02X' "'$c")" ;;
+        esac
+        i=$((i+1))
+    done
+    printf '%s' "$out"
+}
+
+# Mount point of the filesystem containing $1. stat(1) is authoritative where
+# it supports the format; df -P is the POSIX fallback (Alpine's busybox stat
+# has no %m).
+mount_point() {
+    local p=$1 mp
+    if [ "$platform" = macos ] || [ "$platform" = bsd ]; then
+        mp=$(stat -f %m "$p" 2>/dev/null) && [ -n "$mp" ] && { printf '%s' "$mp"; return 0; }
+    else
+        mp=$(stat -c %m "$p" 2>/dev/null) && [ -n "$mp" ] && { printf '%s' "$mp"; return 0; }
+    fi
+    mp=$(df -P "$p" 2>/dev/null | awk 'NR==2 { for (i=6; i<=NF; i++) printf "%s%s", $i, (i<NF ? " " : "") }')
+    # GNU df escapes spaces in mount points.
+    mp=$(printf '%s' "$mp" | sed 's/\\040/ /g')
+    printf '%s' "$mp"
+}
+
+# Like mount_point, for a path that may not exist yet (walk to an ancestor).
+path_mount_point() {
+    local p=$1
+    while [ ! -e "$p" ] && [ "$p" != "/" ]; do
+        p=$(dirname "$p")
+    done
+    mount_point "$p"
+}
+
+# Resolve symlinks in the longest existing prefix of $1 and append the rest.
+# Used for safety comparisons, where a symlinked $HOME must not hide the fact
+# that the trash directory lives inside the target.
+canonical_path() {
+    local p=$1 tail='' base
+    while [ "$p" != "/" ] && [ ! -e "$p" ]; do
+        base=${p##*/}
+        tail=/$base$tail
+        p=${p%/*}
+        [ -n "$p" ] || p=/
+    done
+    if [ -d "$p" ]; then
+        p=$(cd -P "$p" 2>/dev/null && pwd -P) || p=$1
+    fi
+    case $p in
+        /) printf '/%s' "${tail#/}" ;;
+        *) printf '%s%s' "${p%/}" "$tail" ;;
+    esac
+}
+
+# Decode the octal escapes /proc/mounts uses for whitespace and backslashes.
+decode_mount_point() {
+    local mp=$1 tab
+    tab=$(printf '\t')
+    mp=${mp//\\040/ }
+    mp=${mp//\\011/$tab}
+    mp=${mp//\\012/ }
+    mp=${mp//\\134/\\}
+    printf '%s' "$mp"
+}
+
+# Description used by the interactive prompt.
+describe_path() {
+    if [ -L "$1" ]; then printf 'symbolic link'
+    elif [ -d "$1" ]; then printf 'directory'
+    elif [ -f "$1" ]; then printf 'regular file'
+    elif [ -p "$1" ]; then printf 'fifo'
+    elif [ -S "$1" ]; then printf 'socket'
+    elif [ -b "$1" ]; then printf 'block special file'
+    elif [ -c "$1" ]; then printf 'character special file'
+    else printf 'file'
+    fi
+}
+
+# Ask a yes/no question on stderr, reading the answer from stdin (so
+# `yes | trash -i ...` works, like rm -i).
+confirm() {
+    local answer=
+    printf '%s ' "$1" >&2
+    IFS= read -r answer || answer=
+    case $answer in
+        [yY] | [yY][eE][sS]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# true when the platform has a real system trash to use for the system backend.
+have_system_backend() {
+    case $platform in
+        linux | macos) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Directory used by the home backend.
+home_trash_root() {
+    local root tilde='~'
+    if [ -n "${TRASH_DIR:-}" ]; then
+        root=$TRASH_DIR
+        case $root in
+            "$tilde"/*) root=$home/${root#"$tilde/"} ;;
+        esac
+    else
+        root=$home/.trash
+    fi
+    # Normalise duplicate/trailing slashes without requiring realpath(1).
+    while [ "$root" != "/" ] && [ "${root%/}" != "$root" ]; do
+        root=${root%/}
+    done
+    case $root in
+        /*) ;;
+        *) root=$PWD/$root ;;
+    esac
+    printf '%s' "$root"
+}
+
+# Linux home trash ($XDG_DATA_HOME/Trash), normalised the same way.
+xdg_trash_root() {
+    local root=${XDG_DATA_HOME:-$home/.local/share}/Trash
+    while [ "$root" != "/" ] && [ "${root%/}" != "$root" ]; do
+        root=${root%/}
+    done
+    case $root in
+        /*) ;;
+        *) root=$PWD/$root ;;
+    esac
+    printf '%s' "$root"
+}
+
+# ---------------------------------------------------------------------------
+# Move primitives
+# ---------------------------------------------------------------------------
+
+# move_path SRC ABS_DEST
+# Rename where possible; copy then delete across filesystems (mv itself only
+# renames, so the copy path is ours on BSD and whenever a per-volume trash is
+# unavailable). The destination has already been made unique.
+move_path() {
+    local src=$1 dest=$2 mv_err='' mv_rc=0
+    mv_err=$(mv "$src" "$dest" 2>&1)
+    mv_rc=$?
+    [ "$mv_rc" -eq 0 ] && return 0
+
+    # A failed mv may have created a partial destination; the name was ours.
+    command rm -rf "$dest" 2>/dev/null
+
+    # cp(1) would block reading a FIFO and cannot recreate a socket, so do
+    # not attempt a cross-filesystem copy for special files.
+    if [ ! -L "$src" ] && [ ! -f "$src" ] && [ ! -d "$src" ]; then
+        [ -n "$mv_err" ] && printf '%s\n' "$mv_err" >&2
+        err "'$src' is a special file and cannot be copied across filesystems"
+        return 1
+    fi
+
+    if ! cp -Rp "$src" "$dest" 2>/dev/null; then
+        command rm -rf "$dest" 2>/dev/null
+        [ -n "$mv_err" ] && printf '%s\n' "$mv_err" >&2
+        return 1
+    fi
+    if ! command rm -rf "$src" 2>/dev/null; then
+        # Keep the copy: the source is partially removed, so deleting the copy
+        # would lose data. Report the failure and leave both in place.
+        err "could not fully remove '$src'; a copy remains in '$dest'"
+        return 1
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Backend selection
+# ---------------------------------------------------------------------------
+# Sets TRASH_ROOT and TRASH_KIND (xdg|plain) for one absolute target path.
+# TRASH_KIND=xdg means the freedesktop layout (files/ + info/); plain is a
+# directory that holds entries directly.
+TRASH_ROOT=
+TRASH_KIND=
+
+trash_root_for() {
+    local target=$1 dir target_mp home_mp xdg_root vol
+    dir=$(dirname "$target")
+    TRASH_ROOT=
+    TRASH_KIND=
+
+    case $backend in
+        home)
+            TRASH_ROOT=$(home_trash_root)
+            TRASH_KIND=plain
+            return 0
+            ;;
+        system)
+            have_system_backend || {
+                TRASH_ROOT=$(home_trash_root)
+                TRASH_KIND=plain
+                return 0
+            }
+            ;;
+        auto)
+            if ! have_system_backend; then
+                TRASH_ROOT=$(home_trash_root)
+                TRASH_KIND=plain
+                return 0
+            fi
+            ;;
+    esac
+
+    if [ "$platform" = linux ]; then
+        xdg_root=$(xdg_trash_root)
+        home_mp=$(path_mount_point "${XDG_DATA_HOME:-$home/.local/share}")
+        target_mp=$(mount_point "$dir")
+        if [ -z "$target_mp" ] || [ "$target_mp" = "$home_mp" ]; then
+            TRASH_ROOT=$xdg_root
+            TRASH_KIND=xdg
+            return 0
+        fi
+
+        # freedesktop spec: a shared, sticky .Trash/<uid> if the volume offers
+        # one; otherwise a private .Trash-<uid>; otherwise fall back home.
+        if [ -d "$target_mp/.Trash" ] && [ -k "$target_mp/.Trash" ] \
+                && [ -w "$target_mp/.Trash" ]; then
+            if mkdir -p "$target_mp/.Trash/$uid" 2>/dev/null; then
+                TRASH_ROOT=$target_mp/.Trash/$uid
+                TRASH_KIND=xdg
+                return 0
+            fi
+        fi
+        if mkdir -p "$target_mp/.Trash-$uid" 2>/dev/null; then
+            chmod 700 "$target_mp/.Trash-$uid" 2>/dev/null
+            TRASH_ROOT=$target_mp/.Trash-$uid
+            TRASH_KIND=xdg
+            return 0
+        fi
+        TRASH_ROOT=$xdg_root
+        TRASH_KIND=xdg
+        return 0
+    fi
+
+    if [ "$platform" = macos ]; then
+        home_mp=$(mount_point "$home")
+        target_mp=$(mount_point "$dir")
+        if [ -z "$target_mp" ] || [ "$target_mp" = "$home_mp" ]; then
+            TRASH_ROOT=$home/.Trash
+            TRASH_KIND=plain
+            return 0
+        fi
+        vol=$target_mp/.Trashes/$uid
+        if mkdir -p "$vol" 2>/dev/null && [ -w "$vol" ]; then
+            TRASH_ROOT=$vol
+            TRASH_KIND=plain
+            return 0
+        fi
+        TRASH_ROOT=$home/.Trash
+        TRASH_KIND=plain
+        return 0
+    fi
+
+    TRASH_ROOT=$(home_trash_root)
+    TRASH_KIND=plain
+}
+
+ensure_trash_dirs() {
+    if [ "$TRASH_KIND" = xdg ]; then
+        mkdir -p "$TRASH_ROOT/files" "$TRASH_ROOT/info" || return 1
+        chmod 700 "$TRASH_ROOT" "$TRASH_ROOT/files" "$TRASH_ROOT/info" 2>/dev/null
+    else
+        mkdir -p "$TRASH_ROOT" || return 1
+        chmod 700 "$TRASH_ROOT" 2>/dev/null
+    fi
+    return 0
+}
+
+# Move $1 (absolute) into the trash. Sets put_dest. Returns non-zero on error.
+put_in_trash() {
+    local target=$1 base cand n=1 enc now dest real_parent real real_mp trash_real
+    TRASH_ROOT=
+    TRASH_KIND=
+
+    # Safety: never move a directory that contains the trash destination
+    # itself (this catches $HOME, /, and mount points). Resolve the parent so
+    # /tmp/../ does not slip through.
+    real_parent=$(cd -P "$(dirname "$target")" 2>/dev/null && pwd -P)
+    [ -n "$real_parent" ] || real_parent=$(dirname "$target")
+    base=${target##*/}
+    case $real_parent in
+        /) real=/$base ;;
+        *) real=$real_parent/$base ;;
+    esac
+
+    # '/' can never be moved anywhere: the trash is always inside it, so the
+    # copy fallback in move_path() would walk the whole filesystem. Refuse it
+    # even under --no-preserve-root.
+    if [ "$real" = "/" ]; then
+        if [ "$preserve_root" -eq 1 ]; then
+            err "it is dangerous to operate recursively on '/'"
+        else
+            err "refusing to trash '/': the trash directory would be inside it"
+        fi
+        return 1
+    fi
+
+    # A mount point cannot be renamed, and rm(1) reports it as busy. Refuse
+    # before the copy fallback could duplicate the whole mounted filesystem.
+    if [ -d "$real" ] && [ ! -L "$real" ]; then
+        real_mp=$(mount_point "$real")
+        if [ -n "$real_mp" ] && [ "$real_mp" = "$real" ]; then
+            err "cannot trash '$target': Device or resource busy (mount point)"
+            return 1
+        fi
+    fi
+
+    trash_root_for "$target"
+    trash_real=$(canonical_path "$TRASH_ROOT")
+    case $trash_real in
+        "$real" | "$real"/*)
+            err "refusing to trash '$target': the trash directory ($TRASH_ROOT) is inside it"
+            return 1
+            ;;
+    esac
+
+    ensure_trash_dirs || {
+        err "cannot create trash directory '$TRASH_ROOT'"
+        return 1
+    }
+
+    # macOS: Finder records the Put Back metadata that a plain rename cannot.
+    # The home backend is a plain directory, so it never goes through Finder.
+    if [ "$platform" = macos ] && [ "$backend" != home ] \
+            && [ "$TRASH_KIND" = plain ] \
+            && [ "${TRASH_MACOS_FINDER:-0}" = 1 ] \
+            && [ -x /usr/bin/osascript ]; then
+        if /usr/bin/osascript - "$target" >/dev/null 2>&1 <<'APPLESCRIPT'
+on run argv
+    tell application "Finder" to delete (POSIX file (item 1 of argv) as alias)
+end run
+APPLESCRIPT
+        then
+            put_dest=$TRASH_ROOT
+            return 0
+        fi
+        # Permission denied, no GUI session, or Finder refused: fall through
+        # to the direct move.
+    fi
+
+    base=${target##*/}
+    if [ "$TRASH_KIND" = xdg ]; then
+        cand=$base
+        while [ -e "$TRASH_ROOT/files/$cand" ] || [ -e "$TRASH_ROOT/info/$cand.trashinfo" ]; do
+            cand=$base.$n
+            n=$((n + 1))
+        done
+        dest=$TRASH_ROOT/files/$cand
+        enc=$(url_encode "$target")
+        now=$(date +%Y-%m-%dT%H:%M:%S)
+        if ! printf '[Trash Info]\nPath=%s\nDeletionDate=%s\n' "$enc" "$now" \
+                >"$TRASH_ROOT/info/$cand.trashinfo"; then
+            err "cannot write trash metadata in '$TRASH_ROOT/info'"
+            return 1
+        fi
+        if ! move_path "$target" "$dest"; then
+            [ -e "$dest" ] || [ -L "$dest" ] || command rm -f "$TRASH_ROOT/info/$cand.trashinfo"
+            err "cannot move '$target' to the trash"
+            return 1
+        fi
+        put_dest=$dest
+        return 0
+    fi
+
+    cand=$base
+    while [ -e "$TRASH_ROOT/$cand" ] || [ -L "$TRASH_ROOT/$cand" ]; do
+        cand=$base.$n
+        n=$((n + 1))
+    done
+    dest=$TRASH_ROOT/$cand
+    if ! move_path "$target" "$dest"; then
+        err "cannot move '$target' to the trash"
+        return 1
+    fi
+    put_dest=$dest
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Per-operand work
+# ---------------------------------------------------------------------------
+
+# trash_one ARG (as typed). Returns 1 on error, 0 on success or a declined
+# prompt.
+trash_one() {
+    local arg=$1 abs base desc
+
+    if [ -z "$arg" ]; then
+        if [ "$force" -eq 1 ]; then return 0; fi
+        err "cannot trash '': No such file or directory"
+        return 1
+    fi
+
+    case $arg in
+        /*) abs=$arg ;;
+        *) abs=$PWD/$arg ;;
+    esac
+    # Collapse trailing slashes so `trash dir/` behaves like `trash dir`.
+    while [ "$abs" != "/" ] && [ "${abs%/}" != "$abs" ]; do
+        abs=${abs%/}
+    done
+
+    base=${abs##*/}
+    case $base in
+        . | ..)
+            err "refusing to trash '.' or '..' directory: skipping '$arg'"
+            return 1
+            ;;
+    esac
+
+    if [ ! -e "$abs" ] && [ ! -L "$abs" ]; then
+        if [ "$force" -eq 1 ]; then return 0; fi
+        err "cannot trash '$arg': No such file or directory"
+        return 1
+    fi
+
+    if [ -d "$abs" ] && [ ! -L "$abs" ] && [ "$recursive" -eq 0 ]; then
+        if [ "$dir_ok" -eq 0 ]; then
+            err "cannot trash '$arg': Is a directory"
+            return 1
+        fi
+        if [ -n "$(ls -A "$abs" 2>/dev/null)" ]; then
+            err "cannot trash '$arg': Directory not empty"
+            return 1
+        fi
+    fi
+
+    # -i prompts for every operand; the write-protected prompt mirrors rm's
+    # behaviour for an unwritable path on an interactive terminal.
+    if [ "$prompt" = always ]; then
+        desc=$(describe_path "$abs")
+        if ! confirm "trash: move $desc '$arg' to the trash?"; then
+            return 0
+        fi
+    elif [ "$prompt" = default ] && [ "$force" -eq 0 ] && [ -t 0 ] && [ ! -w "$abs" ]; then
+        desc=$(describe_path "$abs")
+        if ! confirm "trash: move write-protected $desc '$arg' to the trash?"; then
+            return 0
+        fi
+    fi
+
+    if ! put_in_trash "$abs"; then
+        return 1
+    fi
+    if [ "$verbose" -eq 1 ]; then
+        printf "trashed '%s' -> '%s'\n" "$arg" "$put_dest"
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Trash directory enumeration for --empty-trash
+# ---------------------------------------------------------------------------
+
+empty_paths=()
+empty_kinds=()
+
+add_empty_root() {
+    local p=$1 k=$2 i=0
+    [ -n "$p" ] || return 0
+    while [ "$i" -lt "${#empty_paths[@]}" ]; do
+        if [ "${empty_paths[$i]}" = "$p" ]; then return 0; fi
+        i=$((i + 1))
+    done
+    empty_paths+=("$p")
+    empty_kinds+=("$k")
+}
+
+# true when a trash root has anything in it.
+root_has_entries() {
+    local p=$1 k=$2
+    if [ "$k" = xdg ]; then
+        [ -d "$p/files" ] && [ -n "$(ls -A "$p/files" 2>/dev/null)" ] && return 0
+        [ -d "$p/info" ] && [ -n "$(ls -A "$p/info" 2>/dev/null)" ] && return 0
+        return 1
+    fi
+    [ -d "$p" ] && [ -n "$(ls -A "$p" 2>/dev/null)" ] && return 0
+    return 1
+}
+
+count_children() {
+    local dir=$1 f n=0
+    for f in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+        if [ -e "$f" ] || [ -L "$f" ]; then n=$((n + 1)); fi
+    done
+    printf '%s' "$n"
+}
+
+# Delete every child of DIR; the directory itself stays. Returns 1 if any
+# unlink failed.
+remove_children() {
+    local dir=$1 f rc=0
+    for f in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+        if [ -e "$f" ] || [ -L "$f" ]; then
+            command rm -rf "$f" || rc=1
+        fi
+    done
+    return "$rc"
+}
+
+empty_root() {
+    local p=$1 k=$2 count=0
+    [ "$verbose" -eq 1 ] && count=$(count_children "$p/files" 2>/dev/null)
+    if [ "$k" = xdg ]; then
+        if remove_children "$p/files"; then
+            remove_children "$p/info" || status=1
+        else
+            # Keep the .trashinfo files: they still describe entries that
+            # could not be deleted.
+            status=1
+        fi
+    else
+        remove_children "$p" || status=1
+    fi
+    if [ "$verbose" -eq 1 ]; then
+        if [ "$count" -eq 1 ]; then
+            printf "emptied '%s' (1 entry)\n" "$p"
+        else
+            printf "emptied '%s' (%s entries)\n" "$p" "$count"
+        fi
+    fi
+}
+
+add_volume_roots() {
+    local v d mp fstype rest
+    case $platform in
+        macos)
+            for v in /Volumes/*; do
+                d=$v/.Trashes/$uid
+                [ -d "$d" ] || continue
+                if root_has_entries "$d" plain; then add_empty_root "$d" plain; fi
+            done
+            ;;
+        linux)
+            [ -r /proc/mounts ] || return 0
+            while read -r _dev mp fstype rest; do
+                case $fstype in
+                    proc | sysfs | devpts | devtmpfs | cgroup | cgroup2 | pstore | \
+                        debugfs | tracefs | securityfs | configfs | fusectl | \
+                        mqueue | hugetlbfs | bpf | autofs | binfmt_misc | nsfs | \
+                        rpc_pipefs | selinuxfs | nfs* | cifs | smb* | sshfs | \
+                        fuse.sshfs | fuse | fuse.* | afs | 9p)
+                        continue
+                        ;;
+                esac
+                mp=$(decode_mount_point "$mp")
+                [ "$mp" = "/" ] && continue
+                d=$mp/.Trash-$uid
+                if [ -d "$d" ] && root_has_entries "$d" xdg; then
+                    add_empty_root "$d" xdg
+                fi
+                d=$mp/.Trash/$uid
+                if [ -d "$d" ] && root_has_entries "$d" xdg; then
+                    add_empty_root "$d" xdg
+                fi
+                # A macOS-formatted volume mounted on Linux keeps entries
+                # directly in .Trashes/<uid> (no files/ or info/ layout).
+                d=$mp/.Trashes/$uid
+                if [ -d "$d" ] && root_has_entries "$d" plain; then
+                    add_empty_root "$d" plain
+                fi
+            done </proc/mounts
+            ;;
+    esac
+}
+
+empty_the_trash() {
+    local p i=0
+
+    if [ "$backend" != home ]; then
+        case $platform in
+            linux)
+                p=$(xdg_trash_root)
+                if root_has_entries "$p" xdg; then
+                    add_empty_root "$p" xdg
+                fi
+                ;;
+            macos)
+                if root_has_entries "$home/.Trash" plain; then
+                    add_empty_root "$home/.Trash" plain
+                fi
+                ;;
+        esac
+    fi
+
+    # The home backend may have been used on this machine even when the
+    # current default is the system trash. On BSD, "system" is ~/.trash.
+    if [ "$backend" != system ] || ! have_system_backend; then
+        p=$(home_trash_root)
+        if root_has_entries "$p" plain; then add_empty_root "$p" plain; fi
+    fi
+
+    if [ "$empty_all" -eq 1 ]; then
+        add_volume_roots
+    fi
+
+    if [ "${#empty_paths[@]}" -eq 0 ]; then
+        printf '%s: the trash is already empty\n' "$prog"
+        return 0
+    fi
+
+    printf '%s: the following trash locations will be emptied permanently:\n' "$prog"
+    while [ "$i" -lt "${#empty_paths[@]}" ]; do
+        printf '  %s\n' "${empty_paths[$i]}"
+        i=$((i + 1))
+    done
+
+    if [ "$prompt" != never ]; then
+        if [ ! -t 0 ]; then
+            err "refusing to empty the trash without confirmation (use -f)"
+            return 1
+        fi
+        if ! confirm "Are you sure? [y/N]"; then
+            printf '%s: aborted\n' "$prog"
+            return 1
+        fi
+    fi
+
+    i=0
+    while [ "$i" -lt "${#empty_paths[@]}" ]; do
+        empty_root "${empty_paths[$i]}" "${empty_kinds[$i]}"
+        i=$((i + 1))
+    done
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+case $(uname -s) in
+    Darwin) platform=macos ;;
+    Linux) platform=linux ;;
+    *) platform=bsd ;;
+esac
+
+if [ -z "$home" ]; then
+    err "HOME is not set"
+    exit 1
+fi
+while [ "$home" != "/" ] && [ "${home%/}" != "$home" ]; do
+    home=${home%/}
+done
+
+operands=()
+while [ $# -gt 0 ]; do
+    case $1 in
+        --)
+            shift
+            while [ $# -gt 0 ]; do
+                operands+=("$1")
+                shift
+            done
+            ;;
+        --empty-trash) empty_mode=1; shift ;;
+        --all) empty_all=1; shift ;;
+        --backend)
+            shift
+            [ $# -gt 0 ] || usage_error "option '--backend' requires an argument"
+            backend=$1
+            shift
+            ;;
+        --backend=*) backend=${1#*=}; shift ;;
+        --help) usage; exit 0 ;;
+        --version) printf '%s %s\n' "$prog" "$version"; exit 0 ;;
+        --preserve-root) preserve_root=1; shift ;;
+        --no-preserve-root) preserve_root=0; shift ;;
+        --force) force=1; prompt=never; shift ;;
+        --recursive) recursive=1; shift ;;
+        --dir) dir_ok=1; shift ;;
+        --verbose) verbose=1; shift ;;
+        --interactive) prompt=always; shift ;;
+        --interactive=*) prompt=${1#*=}; shift ;;
+        -) operands+=("$1"); shift ;;
+        --*) usage_error "unrecognized option '$1'" ;;
+        -*)
+            cluster=${1#-}
+            while [ -n "$cluster" ]; do
+                c=$(first_char "$cluster")
+                cluster=${cluster#?}
+                case $c in
+                    r | R) recursive=1 ;;
+                    f) force=1; prompt=never ;;
+                    i) prompt=always ;;
+                    I) prompt=once ;;
+                    d) dir_ok=1 ;;
+                    v) verbose=1 ;;
+                    *) usage_error "invalid option -- '$c'" ;;
+                esac
+            done
+            shift
+            ;;
+        *) operands+=("$1"); shift ;;
+    esac
+done
+
+case $backend in
+    auto | system | home) ;;
+    *) usage_error "invalid backend '$backend' (expected auto, system, or home)" ;;
+esac
+case $prompt in
+    default | always | once | never) ;;
+    *) usage_error "invalid --interactive value '$prompt' (expected never, once, or always)" ;;
+esac
+
+if [ "$empty_all" -eq 1 ] && [ "$empty_mode" -eq 0 ]; then
+    usage_error "option '--all' is only meaningful with --empty-trash"
+fi
+
+if [ "$empty_mode" -eq 1 ]; then
+    if [ "${#operands[@]}" -gt 0 ]; then
+        usage_error "cannot combine --empty-trash with file operands"
+    fi
+    if ! empty_the_trash; then
+        exit 1
+    fi
+    exit "$status"
+fi
+
+if [ "${#operands[@]}" -eq 0 ]; then
+    usage_error "missing operand"
+fi
+
+# rm -I: one prompt for more than three operands or any recursive directory.
+if [ "$prompt" = once ]; then
+    need_prompt=0
+    recursive_prompt=0
+    [ "${#operands[@]}" -gt 3 ] && need_prompt=1
+    if [ "$recursive" -eq 1 ]; then
+        for op in "${operands[@]}"; do
+            if [ -d "$op" ] && [ ! -L "$op" ]; then
+                need_prompt=1
+                recursive_prompt=1
+                break
+            fi
+        done
+    fi
+    if [ "$need_prompt" -eq 1 ]; then
+        if [ "${#operands[@]}" -eq 1 ]; then
+            args='1 argument'
+        else
+            args="${#operands[@]} arguments"
+        fi
+        if [ "$recursive_prompt" -eq 1 ]; then
+            question="trash: move $args recursively to the trash?"
+        else
+            question="trash: move $args to the trash?"
+        fi
+        confirm "$question" || exit 0
+    fi
+fi
+
+for op in "${operands[@]}"; do
+    trash_one "$op" || status=1
+done
+
+exit "$status"
