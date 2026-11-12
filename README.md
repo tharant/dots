@@ -42,7 +42,7 @@ Detection: `uname -s` (platform), `/etc/os-release` (distro), `/proc/version` + 
 dots/
 ├── common/            # Cross-platform configs (Stow packages)
 │   ├── bash/          # .bashrc, .bash_aliases, .bash_functions, ...
-│   ├── bin/           # ~/bin shims: loadavg, tmux-copy, runtimes, packages (capability-detecting)
+│   ├── bin/           # ~/bin shims: loadavg, tmux-copy, runtimes, packages, trash (capability-detecting)
 │   ├── direnv/        # .config/direnv (direnvrc use_* helpers, direnv.toml), ~/.envrc root + ~/.runtimesrc defaults
 │   ├── git/           # .gitconfig, .gitignore_global
 │   ├── nvim/          # .config/nvim/init.lua (coc.nvim, clipboard-guarded)
@@ -102,6 +102,7 @@ agreement with the code they document:
 | [dots-verify(1)](docs/dots-verify.md) | `scripts/verify.sh` — deployment health check: tools, symlinks, permissions, secrets, direnv + runtimes |
 | [loadavg(1)](docs/loadavg.md) | `~/bin/loadavg` — status-bar load shim (`common/bin`) |
 | [tmux-copy(1)](docs/tmux-copy.md) | `~/bin/tmux-copy` — clipboard ladder + OSC 52 (`common/bin`) |
+| [trash(1)](docs/trash.md) | `~/bin/trash` — `rm`-compatible moves to the platform trash or `~/.trash` (`common/bin`) |
 | [runtimes(1)](docs/runtimes.md) | `~/bin/runtimes` — managed runtimes CLI: uv/fnm/sdkman (`common/bin`) |
 | [packages(1)](docs/packages.md) | `~/bin/packages` — package wishlist CLI: resolve + install `~/.packages` across apt/apk/dnf/pacman/pkg/brew (`common/bin`) |
 | [dots(1)](docs/dots.md) | `~/bin/dots` — repo orchestration CLI: delegates every op, plus composed `sync` and gated interactive `commit` (never pushes) (`common/bin`) |

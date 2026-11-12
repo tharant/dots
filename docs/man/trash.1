@@ -1,0 +1,373 @@
+.TH TRASH 1 "2026-11-11" "dots" "User Commands"
+.SH NAME
+trash \- move files to the platform trash instead of deleting them
+.SH SYNOPSIS
+.B trash
+.RI [ OPTION ]...
+.I FILE ...
+.br
+.B trash
+.B \-\-empty\-trash
+.RB [ \-f ]
+.RB [ \-\-all ]
+.SH DESCRIPTION
+.B trash
+is an
+.BR rm (1)\-compatible
+front end that moves each operand to the platform trash instead of unlinking
+it.  A directory still requires
+.BR \-r ,
+.B \-d
+accepts only empty directories, missing operands fail unless
+.B \-f
+is given, and
+.B .
+and
+.B ..
+are always refused.  The data survives in a trash directory and can usually
+be restored from the file manager.
+.PP
+It is deployed as
+.I ~/bin/trash
+by
+.BR dots\-setup (1)
+from
+.IR common/bin/bin/trash .
+.SH BACKENDS
+.TP
+.B macOS
+.I ~/.Trash
+for the home volume, and
+.I /.Trashes/<uid>
+on other volumes.  Entries are stored directly in the trash directory.
+Finder shows them; the metadata needed for \(lqPut Back\(rq is written only
+when
+.I TRASH_MACOS_FINDER=1
+is set and a GUI session is available.
+.TP
+.B Linux
+.I $XDG_DATA_HOME/Trash
+(default
+.IR ~/.local/share/Trash )
+for the home filesystem, and
+.I /.Trash/<uid>
+or
+.I /.Trash\-<uid>
+on other filesystems.  The freedesktop.org layout is used:
+.I files/
+holds the entries and
+.I info/*.trashinfo
+records each original path and deletion time, so file managers can restore
+them.
+.TP
+.B BSD
+.I ~/.trash
+directly; BSD has no system trash facility.
+.PP
+The
+.B home
+backend always uses
+.I $TRASH_DIR
+when set, otherwise
+.IR ~/.trash ,
+on every platform.
+.B auto
+selects the system facility on Linux and macOS and the home backend
+elsewhere;
+.B system
+does the same, falling back to the home backend where no system facility
+exists.
+.PP
+A target on another filesystem uses that volume's trash when possible, so
+the move remains a rename.  If no per-volume trash is usable, the tree is
+copied and the original removed.  Name collisions are resolved with
+.IR .1 ,
+.IR .2 ,
+and so on, keeping the
+.I .trashinfo
+name in step.
+.SH SAFETY
+These checks run before anything moves, even with
+.BR \-f :
+.TP
+.B . and ..
+Refused as the final path component, as with
+.BR rm (1).
+.TP
+.B /
+Refused, and not overridable with
+.BR \-\-no\-preserve\-root :
+every trash directory is inside
+.IR / ,
+so moving (or copying and deleting) the root filesystem is never attempted.
+The flag is accepted for command-line compatibility only.
+.TP
+.B A path containing the trash directory
+Refused.  This catches
+.IR $HOME ,
+an XDG data parent such as
+.IR ~/.local ,
+or a mount point whose per-volume trash lives inside it, so
+.B trash \-r ~
+fails instead of recursing.
+.TP
+.B A mount point
+Refused.
+.BR rm (1)
+reports the same case as
+.IR "Device or resource busy" .
+Renaming a mount point is impossible, and the copy fallback could duplicate
+an entire filesystem.
+.SH PROMPTS
+.B \-i
+prompts once per operand.  A directory moves atomically, so there is no
+per-file descend prompt.  A declined prompt is not an error; the command
+exits 0, matching
+.BR "rm \-i" .
+A path that is not writable also gets a one-off prompt when standard input
+is a terminal and neither
+.B \-f
+nor an explicit
+.B \-\-interactive
+option was given.
+.PP
+.B \-I
+asks once before moving more than three operands, or before a recursive
+directory operand.
+.PP
+.B \-f
+and
+.B \-i
+are applied left to right, so the last one controls prompting
+.RB ( \-fi
+prompts,
+.B \-if
+does not).  As with GNU
+.BR rm ,
+.B \-f
+keeps its other effect regardless of order: nonexistent operands stay
+silent.
+.SH OPTIONS
+.TP
+.BR \-f ", " \-\-force
+Ignore nonexistent operands and never prompt.
+.TP
+.BR \-i ", " \-\-interactive
+Prompt before every move.
+.TP
+.B \-I
+Prompt once before more than three operands, or a recursive directory.
+.TP
+.BI \-\-interactive= WHEN
+.I WHEN
+is
+.BR never ,
+.BR once ,
+or
+.BR always .
+.B never
+also skips the
+.B \-\-empty\-trash
+confirmation.
+.TP
+.BR \-r ", " \-R ", " \-\-recursive
+Move directories and their contents.
+.TP
+.BR \-d ", " \-\-dir
+Move empty directories; a non-empty directory is still an error.
+.TP
+.BR \-v ", " \-\-verbose
+Print
+.I trashed 'FILE' \-> 'DEST'
+for each move, and a count for each emptied trash.
+.TP
+.BI \-\-backend= WHEN
+.I WHEN
+is
+.BR auto
+(default),
+.BR system ,
+or
+.BR home .
+.TP
+.B \-\-empty\-trash
+Empty the trash; list the locations and ask for confirmation.
+.TP
+.B \-\-all
+With
+.BR \-\-empty\-trash ,
+also empty per-volume trashes.
+.TP
+.B \-\-preserve\-root
+Refuse
+.I /
+(the default).
+.TP
+.B \-\-no\-preserve\-root
+Accepted for
+.BR rm (1)
+compatibility;
+.I /
+is still refused.
+.TP
+.B \-\-help
+Print usage and exit.
+.TP
+.B \-\-version
+Print the version and exit.
+.PP
+Unknown options, including
+.B rm
+flags that have no meaning for a move
+.RB ( \-x ,
+.BR \-\-one\-file\-system ),
+are rejected rather than silently ignored.
+.SH EMPTYING THE TRASH
+.B trash \-\-empty\-trash
+prints every location it is about to clear, then asks
+.I Are you sure? [y/N]
+on standard error and reads the answer from standard input.  With the
+default
+.B auto
+backend it clears the system trash and
+.I ~/.trash
+when that directory has anything in it (either may have been used by this
+tool).
+.B \-\-backend=system
+limits it to the system trash and
+.B \-\-backend=home
+to the home trash.
+.PP
+.B \-\-all
+adds per-volume trashes:
+.I /Volumes/*/.Trashes/<uid>
+on macOS and, on Linux, the
+.IR .Trash\-<uid> ,
+.I .Trash/<uid>
+and
+.I .Trashes/<uid>
+directories of filesystems listed in
+.I /proc/mounts .
+Pseudo-filesystems and network or generic FUSE mounts (NFS, CIFS/SMB, SSHFS,
+AFS, 9P) are skipped, only existing directories are considered, and other
+users' trashes are never touched.
+.PP
+The confirmation needs a terminal.  Without one the command refuses and
+exits 1 unless
+.B \-f
+(or
+.BR \-\-interactive=never )
+was given.  Declining deletes nothing and exits 1; an already-empty trash is
+reported and exits 0.
+.SH ENVIRONMENT
+.TP
+.B TRASH_DIR
+Location used by the
+.B home
+backend (default
+.IR ~/.trash ).
+A leading
+.I ~/
+is expanded.
+.TP
+.B XDG_DATA_HOME
+Parent of the Linux home trash
+.RB ( "$XDG_DATA_HOME/Trash" ,
+default
+.IR ~/.local/share ).
+.TP
+.B TRASH_MACOS_FINDER
+Set to
+.B 1
+to move files through Finder, which records the metadata needed for Put
+Back.  Works only in a GUI session and falls back to a direct move when
+Finder cannot be used.
+.SH FILES
+.TP
+.I $XDG_DATA_HOME/Trash/files/
+Linux home trash entries.
+.TP
+.I $XDG_DATA_HOME/Trash/info/
+The
+.I .trashinfo
+metadata that records each original path and deletion time.
+.TP
+.I <mount>/.Trash/<uid>
+.I <mount>/.Trash\-<uid>
+Linux per-volume trashes.
+.TP
+.I ~/.Trash
+.I <mount>/.Trashes/<uid>
+macOS trashes.
+.TP
+.I $TRASH_DIR
+.I ~/.trash
+The home backend.
+.SH EXIT STATUS
+.TP
+.B 0
+Every operand moved, or deliberately skipped by
+.B \-i
+or
+.BR \-I ;
+or the trash was already empty.
+.TP
+.B 1
+Usage error, at least one operand could not be moved, or
+.B \-\-empty\-trash
+was declined or interrupted, or a deletion failed.
+.SH EXAMPLES
+Move one file and one directory:
+.PP
+.RS
+.nf
+\&trash notes.txt
+\&trash \-r build/
+.fi
+.RE
+.PP
+Prompt before each of a glob, like
+.BR "rm \-i" :
+.PP
+.RS
+.nf
+\&trash \-i *.tmp
+.fi
+.RE
+.PP
+Move an empty directory without
+.BR \-r :
+.PP
+.RS
+.nf
+\&trash \-d empty\-dir
+.fi
+.RE
+.PP
+Show where everything went:
+.PP
+.RS
+.nf
+\&trash \-v old\-*.log
+.fi
+.RE
+.PP
+Use a single portable trash directory on every platform:
+.PP
+.RS
+.nf
+\&TRASH_DIR=~/trash\-bin trash \-\-backend=home report.pdf
+.fi
+.RE
+.PP
+Empty the home and per-volume trashes without the question:
+.PP
+.RS
+.nf
+\&trash \-\-empty\-trash \-\-all \-f
+.fi
+.RE
+.SH SEE ALSO
+.BR rm (1),
+.BR mv (1),
+.BR dots\-setup (1)

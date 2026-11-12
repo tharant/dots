@@ -15,7 +15,7 @@ dots/
 ├── common/          # Shared configs across all platforms (GNU Stow packages)
 │   ├── bash/        # .bashrc (with .bashrc.platform.d hook), aliases, functions, ...
 │   ├── bin/         # ~/bin shims: loadavg(1), tmux-copy(1), runtimes(1), dots(1),
-│   │                #   packages(1)
+│   │                #   packages(1), trash(1)
 │   │                #   (portable, one file for all; documented in docs/)
 │   ├── direnv/      # .config/direnv (direnvrc use_* helpers, direnv.toml),
 │   │                #   active ~/.envrc tree root + ~/.runtimesrc defaults
@@ -160,7 +160,7 @@ message must match the implementation; run `just man-check` (mandoc lint
 over all pages) and fix any doc drift. The [README](README.md)
 Documentation table must list every page/script pair. Currently documented:
 `dots-setup`, `dots-encrypt`, `dots-decrypt`, `dots-verify`, `loadavg`,
-`tmux-copy`, `runtimes`, `packages`, `dots` (the direnv feature guide,
+`tmux-copy`, `trash`, `runtimes`, `packages`, `dots` (the direnv feature guide,
 `docs/direnv-runtimes.md`, accompanies `runtimes`). Config files sourced by
 third-party programs (e.g.
 `common/tmux-powerline/.config/tmux-powerline/{config.sh,themes/dots.sh}`)
