@@ -44,6 +44,15 @@ if [[ -d "$HOME/.local/share/coursier/bin" ]]; then
   esac
 fi
 
+# opencode CLI — installs itself under ~/.opencode/bin. Same guarded,
+# idempotent pattern; boxes without opencode skip cleanly.
+if [[ -d "$HOME/.opencode/bin" ]]; then
+  case ":$PATH:" in
+    *":$HOME/.opencode/bin:"*) ;;
+    *) export PATH="$HOME/.opencode/bin:$PATH" ;;
+  esac
+fi
+
 # Source modular configs
 [[ -s ~/.bash_sensible ]] && source ~/.bash_sensible
 [[ -s ~/.bash_functions ]] && source ~/.bash_functions
