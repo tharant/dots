@@ -2,7 +2,8 @@
 # "dots" theme for tmux-powerline.
 #
 # Follows the vim DotTheme choice in ~/.vim/.theme (`:DotTheme gruvbox` /
-# `:DotTheme codedark` in .vimrc writes it; codedark is the default), so the
+# `:DotTheme codedark`, written from EITHER editor — .vimrc and nvim's
+# identical :DotTheme share this file; codedark is the default), so the
 # tmux status bar, the vim statusline and the trueline prompt all shift
 # palette together. Sourced once per powerline.sh render (and once when
 # main.tmux applies the settings), so keep it cheap.

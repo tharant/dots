@@ -1,3 +1,12 @@
+
+" >>> vimtutor >>> (managed block; removed by setup.sh --uninstall)
+let g:vimtutor_data = '/home/jlambert/.local/share/vimtutor'
+if filereadable('/home/jlambert/.local/share/vimtutor/config/vimrc.common')
+  source /home/jlambert/.local/share/vimtutor/config/vimrc.common
+else
+  echom 'vimtutor: missing /home/jlambert/.local/share/vimtutor -- re-run setup.sh'
+endif
+" <<< vimtutor <<<
 set nocompatible              " be iMproved, required
 filetype off                  " re-enabled by plug#end() below
 
@@ -25,8 +34,11 @@ Plug 'vim-airline/vim-airline-themes'           " airline themes (DotTheme picks
 Plug 'tpope/vim-fugitive'                       " :Git, :Gdiffsplit, ...
 Plug 'airblade/vim-gitgutter'                   " gutter diff markers
 Plug 'derekwyatt/vim-scala'                     " scala syntax/indent
-Plug 'tpope/vim-sensible'                       " sane defaults
 call plug#end()
+" (tpope/vim-sensible was removed 2026-11-23: its "don't touch options the
+" user set" heuristic looks for a ~/ prefix in the last-set location, which
+" stow's symlinked configs never have — so it silently overrode vimrc
+" defaults. All of its useful defaults are now explicit in the block below.)
 
 " First-run bootstrap: if any declared plugin isn't on disk yet, install
 " before anything else runs, then re-source this file.
@@ -37,16 +49,54 @@ endif
 " allow backspacing over everything in insert mode
 set backspace=indent,eol,start
 
-set backup		   " keep a backup file
-set history=1000  " keep 1000 lines of command line history
-set ruler		   " show the cursor position all the time
-set showcmd		   " display incomplete commands
+" Unified with nvim's init.lua (dots parity): everything below runs AFTER
+" plug#end(), so it overrides vim-sensible where both set an option.
+set history=10000
+set ignorecase smartcase
+set scrolloff=8
 set expandtab
 set tabstop=2
 set shiftwidth=2
-set incsearch		" do incremental searching
+set autoindent                " nvim auto-indents new lines; match it
+set smarttab                  " <Tab> at line start moves by shiftwidth
+set nrformats-=octal          " 010 is not eight
+set incsearch
 set number
 set relativenumber    " hybrid: absolute number on cursor line, relative elsewhere
+set hidden
+set complete-=i               " don't scan includes while ins-completing
+set laststatus=2              " airline always gets its line
+set wildmenu wildmode=longest:full,full
+set sidescroll=1              " nvim's horizontal scroll feel
+set display+=lastline,truncate " show the partial last line like nvim
+set formatoptions+=j          " comment joins keep the leader
+set tags^=./tags;             " project tags search up the tree
+set autoread                  " reload files changed outside vim (nvim default)
+set tabpagemax=50
+set viminfo^=!                " persist uppercase registers across sessions
+set sessionoptions-=options viewoptions-=options
+set nolangremap
+
+" Clean-tree file handling (nvim parity).
+" BEHAVIOR CHANGE: the old `set backup` line is gone — no more file~ litter;
+" ~/.vim/undo/ holds the recoverable history instead.
+set noswapfile
+set nobackup
+set undofile
+set undodir=~/.vim/undo//
+if !isdirectory(expand('~/.vim/undo'))
+  call mkdir(expand('~/.vim/undo'), 'p')    " vim does not create undodir itself
+endif
+
+" Responsive UI (nvim parity): CursorHold things (the coc reference
+" highlight below) fire after 250 ms instead of 4 s.
+set updatetime=250
+set splitbelow
+set splitright
+set mouse=a
+set signcolumn=yes            " gutter stays reserved; gitgutter/coc never shift layout
+set cursorline
+set colorcolumn=100
 
 " True color where the terminal supports it (airline follows automatically),
 " 256 colors everywhere else.
@@ -59,6 +109,15 @@ endif
 " ----------------------------------------------------------------------
 " System clipboard: use it when a tool to talk to it exists. Without this
 " a console vim on a headless box errors on `set clipboard=...`.
+" Canonical predicate (MUST match nvim's init.lua guard): one of
+"   pbcopy | wl-copy | xclip | win32yank.exe | clip.exe
+"   OR a graphical session ($WAYLAND_DISPLAY/$DISPLAY).
+" THIS BOX: the binary is compiled -clipboard, so `set clipboard=...`
+" errors (E519) and the set-guard below is dead code here — vim keeps its
+" internal registers and \y (below) is the working path to the clipboard.
+" vim can honor only the helper half of the predicate: no provider
+" machinery exists for the env fallback, so an env-only session leaves \y
+" unbound by design — no helper means no error, no map (MYDOTS).
 " ----------------------------------------------------------------------
 function! s:ClipboardShell() abort
   for [cmd, args] in [
@@ -127,6 +186,16 @@ nnoremap <silent> <leader>tg :DotTheme gruvbox<CR>
 nnoremap <silent> <leader>tc :DotTheme codedark<CR>
 
 call s:SetTheme(s:LoadTheme(), 1)
+
+" Search-highlight / window / buffer parity with nvim (nvim binds these in
+" init.lua with identical keys; sensible's <C-L> nohl stays alongside).
+nnoremap <silent> <Esc> :nohlsearch<CR>
+nnoremap <silent> <C-h> <C-w>h
+nnoremap <silent> <C-j> <C-w>j
+nnoremap <silent> <C-k> <C-w>k
+nnoremap <silent> <C-l> <C-w>l
+nnoremap <silent> [b :bprevious<CR>
+nnoremap <silent> ]b :bnext<CR>
 
 " Allow saving of files as sudo when I forgot to start vim using sudo.
 cmap w!! %!sudo tee > /dev/null %

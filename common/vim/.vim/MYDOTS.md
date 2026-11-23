@@ -1,8 +1,11 @@
 # MYDOTS — Vim setup guide
 
 Everything about this setup lives in `~/.vimrc` (the only main config — vim
-reads that file, not `~/.vim/init.vim`) and `~/.vim/` (plugins). This document
-explains what's active, how it works, and how to use it.
+reads that file, not `~/.vim/init.vim`) and `~/.vim/` (plugins). Neovim runs
+a config kept in lockstep with this one: `~/.config/nvim/init.lua` — same
+options, same keys, the same `:DotTheme` writing the same `~/.vim/.theme`,
+plus a native statusline mirroring airline. This document explains what's
+active, how it works, and how to use it.
 
 ## Requirements
 
@@ -25,7 +28,9 @@ explains what's active, how it works, and how to use it.
 
 ## Keybindings — what's been changed from shipped defaults
 
-Leader is the default `\`.
+Leader is the default `\` — in BOTH editors (nvim's leader was unified onto
+the same backslash so every map below binds identically in `~/.vimrc` and
+`~/.config/nvim/init.lua`).
 
 ### Editing / text
 
@@ -35,7 +40,10 @@ Leader is the default `\`.
 | `Q` | Reflow text (`gq`) | Freed from Ex mode, which is basically useless |
 | `p` (visual mode) | Replace selection with last-pasted text without clobbering the paste register | Lets you paste over multiple things in a row |
 | `w!!` (command mode) | Save file with sudo | "forgot to open vim with sudo" rescue |
-| `\y` | Copy last-yanked text to the system clipboard | Uses whichever helper is found (`pbcopy`, `wl-copy`, `xclip`, `win32yank.exe`, `clip.exe`); only bound if one exists |
+| `<Esc>` | Clear search highlight | also in nvim; sensible's `<C-L>` keeps working |
+| `<C-h>`/`<C-j>`/`<C-k>`/`<C-l>` | Move between splits | same keys in both editors (`<C-l>` still plain-left in insert) |
+| `[b` / `]b` | Previous / next buffer | same keys in both editors |
+| `\y` | Copy last-yanked text to the system clipboard | Uses whichever helper is found (`pbcopy`, `wl-copy`, `xclip`, `win32yank.exe`, `clip.exe`); only bound if one exists. nvim doesn't ship this map — its `clipboard=unnamedplus` already sends every yank to the system clipboard |
 
 ### coc.nvim (code intelligence)
 
@@ -73,6 +81,14 @@ Every switch applies the colorscheme **and** the matching
 confirmation. An unknown name (e.g. `:DotTheme bogus`) prints the available
 options and leaves the theme untouched. Startup re-applies the saved theme
 silently — no message, no keypress needed.
+
+**Neovim ships the same system**: `:DotTheme` with the same names,
+`\tg`/`\tc`, and the same two-step default — with colorscheme files vendored
+at `~/.config/nvim/colors/{gruvbox,codedark}.vim` (copies of the vim
+plugins' `colors/`; refresh them after a `:PlugUpdate`). Both editors write
+the same `~/.vim/.theme`, so the tmux bar and the trueline prompt follow
+theme switches from **either** editor; if `~/.vim` doesn't exist (an
+nvim-only machine), nvim persists to `~/.local/state/nvim/.theme` instead.
 
 ## Theme switching — how it works
 
@@ -127,7 +143,6 @@ Two colorschemes are installed:
 | `vim-fugitive` | Git integration inside vim | `:Git status`, `:Git blame`, `:Gdiffsplit`, … |
 | `vim-gitgutter` | Added/changed/removed markers in the gutter | automatic; `:GitGutterToggle` to disable |
 | `vim-scala` | Scala syntax highlighting / indent | automatic for `.scala` files |
-| `vim-sensible` | Sane defaults | automatic |
 
 ## coc.nvim notes
 
@@ -173,25 +188,64 @@ you ever move settings to a file, mirror or relocate this block.
 - **Tabs**: `expandtab`, 2-space tabs (filetypes may override).
 - **Numbers**: hybrid — absolute current line, relative everywhere else.
 - **Search**: incremental + highlighted (`hlsearch`).
+- **Tabs**: `expandtab`, 2-space tabs (filetypes may override) — nvim uses
+  the same 2-space base (its scala/sbt override became redundant and was
+  removed).
+- **Numbers**: hybrid — absolute current line, relative everywhere else.
+- **Search**: incremental + highlighted (`hlsearch`), case-insensitive until
+  CamelCase (`ignorecase smartcase`), `<Esc>` clears the highlight.
+- **Scroll/UI**: `scrolloff=8`, `cursorline`, `colorcolumn=100`,
+  `signcolumn=yes` (a reserved gutter column that never shifts layout),
+  splits always open below/right, mouse enabled everywhere.
+- **Updatetime**: 250 ms — CursorHold features (the coc reference highlight)
+  react quickly in vim, matching nvim's long-standing setting.
+- **File handling**: no swap files, no `file~` backups; undo persists across
+  restarts (`undofile`) in `~/.vim/undo/` (vim) / the nvim data dir.
 - **Backspace**: works over indent, EOL, insert-start like everywhere else.
 - **Colors**: true color (`termguicolors`) when `$COLORTERM` says so (or you're
   on kitty/alacritty), 256 colors otherwise; airline follows either way.
 - **Clipboard**: `clipboard=unnamedplus` when a clipboard helper is found (so
   yanks go straight to the system clipboard); `\y` re-sends the last yank (see
-  keybinding table).
+  keybinding table). Note: the vim binary on this box is compiled
+  **-clipboard** — `set clipboard=…` errors there (E519), which is why the
+  set-guard exists: it applies only on +clipboard builds, and `\y` is the
+  working path on this box. nvim's guard is functional (it has a clipboard
+  provider), including the graphical-session fallback vim can't use.
+- **Statusline**: vim uses vim-airline with powerline glyphs; nvim uses a
+  native, plugin-free statusline that mirrors airline's contract (mode chip,
+  branch + hunks, LSP status, filetype, E/W counts, powerline position glyphs)
+  driven by `g:dot_powerline_fonts`.
 
 ## Files in `~/.vim` and `~`
 
 ```
 ~/.vimrc            main config (the ONLY vim config; edit this one)
 ~/.vim/.theme       persisted theme choice, one line: gruvbox | codedark
-                    (generated by the theme switcher, not tracked)
+                    (generated by the theme switcher, not tracked; read AND
+                    written by the nvim twin too, plus tmux/trueline)
+~/.vim/undo/        persistent undo directory (generated by the undofile
+                    switch, not tracked)
 ~/.vim/autoload/plug.vim      plugin manager (vendored vim-plug)
 ~/.vim/plugged/     installed plugins (generated on first launch)
 ~/.vim/colors/xoria256.vim   old default colorscheme, kept as a fallback
 ~/.vim/.netrwhist   vim's netrw history (auto-generated, regenerates itself)
 ~/.vim/MYDOTS.md    this file
+~/.config/nvim/init.lua       nvim main config (kept in lockstep with ~/.vimrc)
+~/.config/nvim/colors/*.vim   vendored gruvbox/codedark copies for nvim (sync
+                              recipe in the init.lua theme-block header)
+~/.local/state/nvim/.theme    nvim-only theme fallback (only when ~/.vim is absent)
 ```
+
+## Cleaned up on 2026-11-23
+
+- **vim-sensible removed** — its defaults are now explicit in the "Unified
+  with nvim" block at the top of `~/.vimrc`. Reason: sensible only defers to
+  options it believes were "set from a file in $HOME" (it greps the last-set
+  location for a literal `~/`), and stow's symlinked configs record absolute
+  repo paths — so sensible silently overrode vimrc's own settings (it reset
+  `scrolloff` to 1 and `history` to 1000 after vimrc set 8/10000). All of its
+  useful defaults (wildmenu, autoread, laststatus, smarttab, `nrformats-=o`,
+  `formatoptions+=j`, session/viminfo tweaks) are now written explicitly.
 
 ## Cleaned up on 2026-08-28
 
