@@ -35,6 +35,15 @@ if [[ -d "$HOME/.local/bin" ]]; then
   esac
 fi
 
+# coursier-managed Scala tooling (cs, metals, scala-cli). Same pattern as
+# ~/.local/bin above: no directory, no PATH entry; idempotent.
+if [[ -d "$HOME/.local/share/coursier/bin" ]]; then
+  case ":$PATH:" in
+    *":$HOME/.local/share/coursier/bin:"*) ;;
+    *) export PATH="$HOME/.local/share/coursier/bin:$PATH" ;;
+  esac
+fi
+
 # Source modular configs
 [[ -s ~/.bash_sensible ]] && source ~/.bash_sensible
 [[ -s ~/.bash_functions ]] && source ~/.bash_functions
