@@ -107,6 +107,10 @@ if vim.fn.has('nvim-0.11') == 1 and vim.fn.executable('git') == 1
   end
   metals_config.settings = {
     showImplicitArguments = true,   -- shows inferred types: good while learning
+    -- Manage the Metals binary with coursier (`cs update metals`), not
+    -- nvim-metals' own installer: one shared, version-consistent binary for
+    -- nvim-metals and vim's coc fallback in ~/.vimrc.
+    useGlobalExecutable = true,
   }
 
   vim.api.nvim_create_autocmd("FileType", {
