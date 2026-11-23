@@ -85,7 +85,7 @@ Two colorschemes are installed:
 
 - The chosen theme is written to `~/.vim/.theme` (plain text, one line) and
   re-applied at startup. If that file is missing or has an unrecognized value,
-  it defaults to `gruvbox`. (The file is generated on first use — the repo
+  it defaults to `codedark`. (The file is generated on first use — the repo
   doesn't ship one.)
 - The block in `~/.vimrc` right after the true-color setup defines `s:themes`
   (theme → colorscheme/airline names), `s:LoadTheme()` (reads the restored name),
@@ -217,6 +217,6 @@ useful:
   vendored clones went away in favor of the manager: `plug.vim` is now the
   single vendored file in `~/.vim/autoload/`, and plugins install into
   `~/.vim/plugged/` on first launch. `~/.vim/.theme` is untracked too — the
-  theme switcher writes it whenever you run `\tg` / `\tc`, and you get gruvbox
+  theme switcher writes it whenever you run `\tg` / `\tc`, and you get codedark
   until then. coc.nvim's node requirement (>= 22.15) is why the requirement
   note above exists.
