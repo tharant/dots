@@ -185,6 +185,14 @@ autocmd CursorHold * silent call CocActionAsync('highlight')
 " Symbol renaming.
 nmap <leader>rn <Plug>(coc-rename)
 
+" Code action / quickfix / format-selection + diagnostic traversal —
+" same keys vimtutor lesson 12 teaches, for every coc-served language.
+nmap <silent> <leader>ac <Plug>(coc-codeaction-cursor)
+nmap <silent> <leader>qf <Plug>(coc-fix-current)
+xmap <silent> <leader>f  <Plug>(coc-format-selected)
+nmap <silent> [g <Plug>(coc-diagnostic-prev)
+nmap <silent> ]g <Plug>(coc-diagnostic-next)
+
 " Go to definition / references / implementation.
 nmap <silent> gd <Plug>(coc-definition)
 nmap <silent> gy <Plug>(coc-type-definition)
@@ -206,6 +214,25 @@ endfunction
 autocmd FileType css setlocal omnifunc=csscomplete#CompleteCSS
 autocmd FileType html,markdown setlocal omnifunc=htmlcomplete#CompleteTags
 autocmd FileType xml setlocal omnifunc=xmlcomplete#CompleteTags
+
+" ----------------------------------------------------------------------
+" Scala via Metals: coc's generic language-server client drives the
+" Coursier-installed Metals binary directly (the old coc-metals extension
+" is deprecated and unmaintained — no coc extension covers Metals today).
+" Guarded on the binary so machines without coursier are untouched, and
+" injected via g:coc_user_config so no coc-settings.json has to ship.
+" The full Metals experience (import dialogs, doctor, worksheets) lives
+" in Neovim via nvim-metals — see ~/.vim/MYDOTS.md "Scala (Metals)".
+if !empty(exepath('metals'))
+  let g:coc_user_config = get(g:, 'coc_user_config', {})
+  let g:coc_user_config.languageserver = get(g:coc_user_config, 'languageserver', {})
+  let g:coc_user_config.languageserver.scala = {
+        \ 'command': exepath('metals'),
+        \ 'args': [],
+        \ 'filetypes': ['scala', 'sbt'],
+        \ 'rootPatterns': ['build.sbt', 'build.sc', '.git'],
+        \ }
+endif
 
 endif " s:coc_ok
 

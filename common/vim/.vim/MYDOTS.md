@@ -13,6 +13,12 @@ explains what's active, how it works, and how to use it.
   all) so startup stays clean; installing node and restarting vim re-enables
   it. node comes from fnm via the `runtimes` CLI (see
   [docs/direnv-runtimes.md](../../docs/direnv-runtimes.md) in the repo).
+- **Scala tooling** (`metals`) is optional: `.bashrc` gives coursier's bin dir
+  a PATH entry when `~/.local/share/coursier/bin` exists, and the Scala
+  client in `.vimrc` only wires up when the `metals` binary is found (see
+  [Scala (Metals) via coc](#scala-metals-via-coc)). On Neovim the full
+  nvim-metals setup needs nvim >= 0.11 (this box runs an upstream tarball; the
+  stock Debian `nvim` is 0.10 and quietly skips it).
 - A clipboard helper (`pbcopy`, `wl-copy`, `xclip`, `win32yank.exe` or
   `clip.exe`) for `\y` and for the `clipboard=unnamedplus` shortcut. Without
   one vim just keeps its internal clipboard — no errors, no maps bound.
@@ -46,6 +52,10 @@ you don't get with the plugin alone:
 | `gr` | Find references |
 | `K` | Show docs in preview window (falls back to built-in keyword lookup when no LSP covers the buffer) |
 | `\rn` | Rename symbol under cursor |
+| `\ac` | Show code actions at the cursor (fixes, refactors) | |
+| `\qf` | Apply the quickfix offered by the diagnostic at the cursor | |
+| `\f` (visual) | Format the selection via the language server | |
+| `[g` / `]g` | Jump to previous / next diagnostic | |
 | (hover) | Holding the cursor on a symbol highlights where it's used (`CursorHold` autocmd) |
 
 ### Theme switching
@@ -129,6 +139,34 @@ Two colorschemes are installed:
   (e.g. Debian bookworm, which ships Vim 9.0 / Node 18), install Neovim from
   upstream and use this same setup there.
 - Management: `:CocInfo`, `:CocList extensions`, `:CocCommand <name>`.
+
+### Scala (Metals) via coc
+
+`.scala` / `.sbt` buffers are served by a **generic coc language-server
+client** that drives the Metals binary installed by Coursier. Why not the
+usual `coc-metals` extension? It is deprecated and unmaintained — no coc
+extension covers Metals anymore, and upstream only recommends nvim-metals
+(Neovim) or plain LSP clients for Vim. So the split is:
+
+- **Neovim — primary, full experience.** `~/.config/nvim` bootstraps
+  `nvim-metals` (shallow clone into a `site/pack/dots/start` pack on first
+  run — no plugin manager). Buffer-local mappings (`gd`, `gr`, `K`,
+  `\rn`, `\ac`, `\fm`, `]d`/`[d`, …) plus Metals commands
+  (`\mi` import build, `\mo` organize imports, `\mp` doctor; every command
+  in `:h metals-commands`). Worksheets get inlay hints.
+- **Vim — fallback, core LSP.** `.vimrc` injects `languageserver.scala`
+  into `g:coc_user_config`, pointed at `exepath('metals')` and guarded on
+  the binary's existence. Completion, `K`, `gd`/`gr`/`gy`/`gi`, `\rn`,
+  `\ac`, `[g`/`]g` and `:CocList diagnostics` all work there; the build
+  import prompt arrives as a normal coc dialog. Metals-specific commands
+  are not registered as `:CocCommand` names, but they can still be run —
+  e.g. `:CocCommand workspace.executeCommand metals.import-build`.
+- **Install (both editors share one Metals binary):** coursier lives in
+  `~/.local/share/coursier/bin` (PATH block in `.bashrc`), then
+  `cs install metals scala-cli`.
+
+Caveat: `g:coc_user_config` takes precedence over `coc-settings.json`; if
+you ever move settings to a file, mirror or relocate this block.
 
 ## Other `~/.vimrc` settings worth knowing
 
