@@ -70,9 +70,11 @@ you don't get with the plugin alone:
 
 | Keys / command | Action |
 |----------------|--------|
+| `:DotTheme default` | The dots default: xoria256 (airline `minimalist`) in vim, tokyonight-storm in nvim |
 | `:DotTheme gruvbox` | Switch to gruvbox (colorscheme + airline) |
 | `:DotTheme codedark` | Switch to vim-code-dark |
 | `:DotTheme <Tab>` | Tab-complete the theme name |
+| `\td` | default |
 | `\tg` | gruvbox |
 | `\tc` | vim-code-dark |
 
@@ -80,29 +82,36 @@ Every switch applies the colorscheme **and** the matching
 [vim-airline](#active-plugins-vimplugged) statusline theme, and echoes a
 confirmation. An unknown name (e.g. `:DotTheme bogus`) prints the available
 options and leaves the theme untouched. Startup re-applies the saved theme
-silently — no message, no keypress needed.
+silently — no message, no keypress needed — and never writes the file, so
+until you pick one you track the dots default (`default`).
 
 **Neovim ships the same system**: `:DotTheme` with the same names,
-`\tg`/`\tc`, and the same two-step default — with colorscheme files vendored
-at `~/.config/nvim/colors/{gruvbox,codedark}.vim` (copies of the vim
-plugins' `colors/`; refresh them after a `:PlugUpdate`). Both editors write
+`\td`/`\tg`/`\tc`, and the same default — with colorscheme files vendored
+at `~/.config/nvim/colors/` (`gruvbox.vim`/`codedark.vim` are copies of the
+vim plugins' `colors/`, refresh them after a `:PlugUpdate`;
+`tokyonight-storm.vim` is folke/tokyonight.nvim's `extras/vim` build, pinned
+in its header, Apache-2.0 in `LICENSE.tokyonight`). `default` is the one
+name that maps to a different scheme per editor. Both editors write
 the same `~/.vim/.theme`, so the tmux bar and the trueline prompt follow
 theme switches from **either** editor; if `~/.vim` doesn't exist (an
 nvim-only machine), nvim persists to `~/.local/state/nvim/.theme` instead.
 
 ## Theme switching — how it works
 
-Two colorschemes are installed:
+Three themes:
 
-| Theme           | Colorscheme name | Airline theme |
-|-----------------|------------------|---------------|
-| morhetz/gruvbox | `gruvbox`        | `gruvbox`     |
-| vim-code-dark   | `codedark`       | `codedark`    |
+| Theme (`:DotTheme`) | vim colorscheme | nvim colorscheme | Airline theme |
+|---------------------|-----------------|------------------|---------------|
+| `default`           | `xoria256` (`~/.vim/colors`) | `tokyonight-storm` (vendored) | `minimalist` |
+| `gruvbox`           | `gruvbox`       | `gruvbox`        | `gruvbox`     |
+| `codedark`          | `codedark`      | `codedark`       | `codedark`    |
 
-- The chosen theme is written to `~/.vim/.theme` (plain text, one line) and
-  re-applied at startup. If that file is missing or has an unrecognized value,
-  it defaults to `codedark`. (The file is generated on first use — the repo
-  doesn't ship one.)
+- An explicit `:DotTheme` choice is written to `~/.vim/.theme` (plain text,
+  one line) and re-applied at startup. If that file is missing or has an
+  unrecognized value, `default` applies. Startup never writes the file (the
+  repo doesn't ship one), so a machine with no choice follows the dots
+  default. Machines that predate this kept a `.theme` the old startup wrote
+  automatically: run `:DotTheme default` (or `\td`) once to switch.
 - The block in `~/.vimrc` right after the true-color setup defines `s:themes`
   (theme → colorscheme/airline names), `s:LoadTheme()` (reads the restored name),
   `s:SetTheme()` (validates, sets `g:airline_theme`, enables
@@ -185,13 +194,16 @@ you ever move settings to a file, mirror or relocate this block.
 
 ## Other `~/.vimrc` settings worth knowing
 
-- **Tabs**: `expandtab`, 2-space tabs (filetypes may override).
-- **Numbers**: hybrid — absolute current line, relative everywhere else.
-- **Search**: incremental + highlighted (`hlsearch`).
 - **Tabs**: `expandtab`, 2-space tabs (filetypes may override) — nvim uses
   the same 2-space base (its scala/sbt override became redundant and was
   removed).
-- **Numbers**: hybrid — absolute current line, relative everywhere else.
+- **Numbers**: hybrid — absolute current line (highlighted, `cursorline`),
+  relative everywhere else, scrolling with the cursor. nvim also signs the
+  distance through `statuscolumn`: `-3 -2 -1` above the cursor, `+1 +2 +3`
+  below (vim has no `statuscolumn`, so its relative numbers are unsigned).
+- **Under sudo/doas** (`$SUDO_USER`/`$DOAS_USER` set): no coc and no plugin
+  auto-install. macOS sudo keeps your `$HOME`, so `sudo vim` would otherwise
+  write `~/.config/coc` and `~/.npm` as root; prefer `sudoedit`.
 - **Search**: incremental + highlighted (`hlsearch`), case-insensitive until
   CamelCase (`ignorecase smartcase`), `<Esc>` clears the highlight.
 - **Scroll/UI**: `scrolloff=8`, `cursorline`, `colorcolumn=100`,
@@ -220,19 +232,19 @@ you ever move settings to a file, mirror or relocate this block.
 
 ```
 ~/.vimrc            main config (the ONLY vim config; edit this one)
-~/.vim/.theme       persisted theme choice, one line: gruvbox | codedark
+~/.vim/.theme       persisted theme choice, one line: default | gruvbox | codedark
                     (generated by the theme switcher, not tracked; read AND
                     written by the nvim twin too, plus tmux/trueline)
 ~/.vim/undo/        persistent undo directory (generated by the undofile
                     switch, not tracked)
 ~/.vim/autoload/plug.vim      plugin manager (vendored vim-plug)
 ~/.vim/plugged/     installed plugins (generated on first launch)
-~/.vim/colors/xoria256.vim   old default colorscheme, kept as a fallback
+~/.vim/colors/xoria256.vim   the `default` theme's vim colorscheme
 ~/.vim/.netrwhist   vim's netrw history (auto-generated, regenerates itself)
 ~/.vim/MYDOTS.md    this file
 ~/.config/nvim/init.lua       nvim main config (kept in lockstep with ~/.vimrc)
-~/.config/nvim/colors/*.vim   vendored gruvbox/codedark copies for nvim (sync
-                              recipe in the init.lua theme-block header)
+~/.config/nvim/colors/*.vim   vendored gruvbox/codedark/tokyonight-storm for
+                              nvim (sync recipe in the init.lua theme block)
 ~/.local/state/nvim/.theme    nvim-only theme fallback (only when ~/.vim is absent)
 ```
 
@@ -271,6 +283,6 @@ useful:
   vendored clones went away in favor of the manager: `plug.vim` is now the
   single vendored file in `~/.vim/autoload/`, and plugins install into
   `~/.vim/plugged/` on first launch. `~/.vim/.theme` is untracked too — the
-  theme switcher writes it whenever you run `\tg` / `\tc`, and you get codedark
-  until then. coc.nvim's node requirement (>= 22.15) is why the requirement
+  theme switcher writes it whenever you run `\td` / `\tg` / `\tc`, and you get
+  the `default` theme until then. coc.nvim's node requirement (>= 22.15) is why the requirement
   note above exists.

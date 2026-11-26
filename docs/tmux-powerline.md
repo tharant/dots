@@ -69,8 +69,9 @@ platform.
 `themes/dots.sh` is the one custom file of consequence. It:
 
 - reads `~/.vim/.theme` (what [.vimrc](../common/vim/.vimrc)'s `:DotTheme
-  gruvbox|codedark` command writes; codedark is the default), falling back to
-  the codedark palette if the file is missing or unrecognized — the tmux bar,
+  default|gruvbox|codedark` command writes), falling back to the `default`
+  palette (tokyonight-storm, matching nvim's `default` scheme) if the file is
+  missing or unrecognized — the tmux bar,
   the vim statusline and the trueline prompt therefore switch palette
   together;
 - defines the `TMUX_POWERLINE_SEPARATOR_*` glyphs **itself** (a custom theme

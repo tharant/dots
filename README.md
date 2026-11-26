@@ -133,6 +133,32 @@ Each secret is stored as two age artifacts encrypting the same plaintext — `X.
 - A **Nerd Font** on the *terminal client* machine (for the tmux status and trueline glyphs); headless/SSH hosts need nothing. The tmux-powerline config declares it via `TMUX_POWERLINE_PATCHED_FONT_IN_USE=true`.
 - `gh` (`gh auth login`) for the git credential helper on any target
 
+## Editors: Vim and Neovim
+
+Both editors share one look and one keyset (details: `common/vim/.vim/MYDOTS.md`):
+
+- **Theme**: `:DotTheme default|gruvbox|codedark` (`\td` `\tg` `\tc`), saved in `~/.vim/.theme` and followed by tmux-powerline and the prompt. With no saved choice, `default` applies: **xoria256** in Vim, **tokyonight-storm** in Neovim (vendored, Apache-2.0). An older machine whose `.theme` was written automatically keeps that theme until you run `:DotTheme default` once.
+- **Line numbers**: hybrid relative. The cursor line shows its absolute number (highlighted, `cursorline`) and the rest show their distance, moving with the cursor. Neovim also prefixes the distance with `-` above and `+` below the cursor (`statuscolumn`); Vim has no `statuscolumn`, so its distances are unsigned.
+- **Status line**: vim-airline in Vim; a native airline look-alike in Neovim (mode chip, git branch + hunks, filetype, encoding[format], percent/line/column, E/W counts).
+- **vimtutor** ([tharant/vimtutor](https://github.com/tharant/vimtutor)): when it's installed in `~/.local/share/vimtutor`, both configs source it with `g:vimtutor_ui = 'off'`, so it adds the lessons and keys but never replaces the dots colorscheme or status line.
+- **sudo**: under `sudo`/`doas`, Vim starts without coc and without plugin auto-install. macOS `sudo` keeps your `$HOME`, so coc would otherwise create `~/.config/coc` and `~/.npm` as root. Prefer `sudoedit`.
+- **Truecolor**: Neovim always sets `termguicolors`; Vim sets it when `$COLORTERM` says truecolor (iTerm2 does). Over SSH `COLORTERM` is usually not forwarded, so Vim falls back to xoria256's 256-color palette.
+
+### Using the official Neovim tutor (`:Tutor`) with these configs
+
+The stock tutorial works, with a few visible differences:
+
+| Tutor lesson | Difference with dots | To follow it exactly |
+|---|---|---|
+| any | With vimtutor installed, `:Tutor` opens vimtutor | `:TutorClassic` |
+| 6.5 (set option) | `ignorecase smartcase` is already on, so `/ignore` already finds `Ignore`/`IGNORE` before `:set ic`; `hlsearch incsearch` are on too | `:set noic` first |
+| 7.2 (completion, Vim only) | `wildmode=longest:full,full`: the first `<Tab>` completes the common prefix, the second opens the menu | `:set wildmode=full` |
+| 2.1.1 (`va"p`) | Visual `p` keeps the pasted text in `"` (like `P`) instead of the replaced text | `P` behaves the same everywhere |
+| 2.1.5 (clipboard, Neovim) | `clipboard=unnamedplus`: every yank/delete also goes to `+`, so `"` and `"+` hold the same text. Over SSH this needs OSC 52 (iTerm2: allow clipboard access) | `:set clipboard=` |
+| insert mode (not taught) | `<Tab>`/`<S-Tab>`/`<C-n>`/`<C-p>`/`<CR>` drive coc's completion menu in Vim | — |
+
+The ✓/✗ marks the tutor draws still show: they are signs, and the Neovim `statuscolumn` keeps the sign column.
+
 ## Adding Platform-Specific Configs
 
 Platform overrides go in `macos/`, `linux/`, `alpine/`, `wsl/`, or `bsd/` — not as conditionals in `common/` (the sanctioned exceptions are the `~/.bashrc.platform.d` hook in `.bashrc` and `command -v` guards for genuinely optional tools). Each platform dir uses the same Stow package structure mirroring `$HOME`.

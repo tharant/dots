@@ -4,6 +4,9 @@
 -- with this marker so its setup.sh sees the file as wired and leaves the stow
 -- symlink alone; the path is $HOME-relative so it works on every machine.
 -- vimrc.common defaults g:vimtutor_data to ~/.local/share/vimtutor itself.
+-- dots owns the colorscheme and status line (DotTheme, the native
+-- statusline below), so vimtutor must not apply its own (g:vimtutor_ui).
+vim.g.vimtutor_ui = "off"
 local vimtutor_rc = vim.fn.expand("~/.local/share/vimtutor/config/vimrc.common")
 if vim.fn.filereadable(vimtutor_rc) == 1 then
   local ok, err = pcall(vim.cmd.source, vimtutor_rc)
@@ -23,9 +26,37 @@ end
 -- stays unset (vim has none either).
 vim.g.mapleader = "\\"
 
--- Line numbers
+-- Line numbers: hybrid relative, like ~/.vimrc (absolute number on the
+-- cursor line, distance elsewhere) — plus a direction sign nvim can draw
+-- via 'statuscolumn' and vim cannot: -3 -2 -1 above the cursor, +1 +2 +3
+-- below. Signs (git/diagnostics) stay to the left; wrapped continuation
+-- lines get no number. Colors: LineNrAbove / CursorLineNr / LineNrBelow.
 vim.opt.number = true
 vim.opt.relativenumber = true
+
+function _G.dots_statuscolumn()
+  local win = vim.g.statusline_winid
+  if not (vim.wo[win].number or vim.wo[win].relativenumber) then return '%s' end
+  local lnum, rel = vim.v.lnum, vim.v.relnum
+  local buf = vim.api.nvim_win_get_buf(win)
+  -- One width for every row (no jitter): room for the sign plus the larger
+  -- of the buffer's line count and 'numberwidth' - 1.
+  local width = math.max(vim.wo[win].numberwidth - 1,
+    #tostring(vim.api.nvim_buf_line_count(buf)) + 1)
+  if vim.v.virtnum ~= 0 then                    -- wrapped/virtual line
+    return '%s' .. string.rep(' ', width) .. ' '
+  end
+  local text, hl
+  if rel == 0 then
+    text, hl = tostring(lnum), 'CursorLineNr'
+  elseif lnum < vim.api.nvim_win_get_cursor(win)[1] then
+    text, hl = '-' .. rel, 'LineNrAbove'
+  else
+    text, hl = '+' .. rel, 'LineNrBelow'
+  end
+  return '%s%#' .. hl .. '#' .. string.format('%' .. width .. 's', text) .. ' %*'
+end
+vim.o.statuscolumn = '%!v:lua.dots_statuscolumn()'
 
 -- Search
 vim.opt.ignorecase = true
@@ -260,17 +291,23 @@ vim.o.statusline = '%!v:lua.dots_statusline()'
 
 -- ----------------------------------------------------------------------
 -- Theme switcher (:DotTheme) — mirrors ~/.vimrc's switcher exactly: same
--- two themes, same unknown-name error, same persistence, quiet startup
--- apply. Colorschemes are vendored copies in colors/ (stow puts
+-- theme names, same unknown-name error, same persistence, quiet startup
+-- apply that never writes the file. 'default' (no choice made) is the one
+-- name that maps to a different scheme per editor: tokyonight-storm here,
+-- xoria256 in vim. Colorschemes are vendored copies in colors/ (stow puts
 -- ~/.config/nvim/colors first on runtimepath). Refresh after a vim
 -- :PlugUpdate:  cp ~/.vim/plugged/gruvbox/colors/gruvbox.vim colors/
 --               cp ~/.vim/plugged/vim-code-dark/colors/codedark.vim colors/
+-- tokyonight-storm.vim comes from folke/tokyonight.nvim extras/vim (see
+-- its header for the pinned commit and colors/LICENSE.tokyonight).
 -- Persistence: BOTH editors read/write ~/.vim/.theme (tmux-powerline and
 -- the trueline prompt read it too — one file keeps terminal+vim+nvim in
 -- sync). Only when the vim package is absent (nvim-only machine) does
 -- nvim use its own state file instead (stow-safe, not in the repo tree).
 -- ----------------------------------------------------------------------
-local THEMES = { gruvbox = true, codedark = true }
+local THEMES = {                                -- DotTheme name -> colorscheme
+  default = 'tokyonight-storm', gruvbox = 'gruvbox', codedark = 'codedark',
+}
 
 local function theme_path()
   if vim.fn.isdirectory(vim.fn.expand('~/.vim')) == 1 then
@@ -281,10 +318,10 @@ end
 
 local function load_theme()
   local f = io.open(theme_path(), 'r')
-  if not f then return 'codedark' end
+  if not f then return 'default' end
   local name = (f:read('*l') or ''):gsub('%s+', '')
   f:close()
-  return THEMES[name] and name or 'codedark'    -- missing file AND unknown → codedark
+  return THEMES[name] and name or 'default'     -- missing file AND unknown → default
 end
 
 local function set_theme(name, quiet)
@@ -295,13 +332,13 @@ local function set_theme(name, quiet)
     return
   end
   vim.g.gruvbox_italic = 1                      -- same force as ~/.vimrc
-  local ok, err = pcall(vim.cmd.colorscheme, name)
+  local ok, err = pcall(vim.cmd.colorscheme, THEMES[name])
   if not ok then
     vim.api.nvim_echo({ { 'Failed to load colorscheme ' .. name .. ': ' .. err, 'WarningMsg' } }, true, {})
     return                                      -- no persist when the colorscheme fails
   end
-  vim.fn.writefile({ name }, theme_path())
-  if not quiet then
+  if not quiet then                             -- startup applies, never persists
+    vim.fn.writefile({ name }, theme_path())
     vim.api.nvim_echo({ { 'Theme set to ' .. name .. ' (persisted to ' .. theme_path() .. ')' } }, true, {})
   end
 end
@@ -312,17 +349,19 @@ end
 pcall(vim.cmd, 'delcommand DotTheme')
 pcall(vim.keymap.del, 'n', '<space>tg')
 pcall(vim.keymap.del, 'n', '<space>tc')
+pcall(vim.keymap.del, 'n', '<space>td')
 pcall(vim.keymap.del, 'n', '<space>tt')
 
 vim.api.nvim_create_user_command('DotTheme', function(o) set_theme(o.args) end, {
   nargs = 1,
-  desc = 'Switch dotfiles theme (gruvbox | codedark); persists like vim',
+  desc = 'Switch dotfiles theme (default | gruvbox | codedark); persists like vim',
   complete = function(arglead)                  -- = -complete=customlist in .vimrc
     local keys = vim.tbl_keys(THEMES); table.sort(keys)
     return vim.tbl_filter(function(k) return k:sub(1, #arglead) == arglead end, keys)
   end,
 })
 
+vim.keymap.set('n', '<leader>td', '<cmd>DotTheme default<CR>', { silent = true, desc = 'Theme: default (tokyonight-storm)' })
 vim.keymap.set('n', '<leader>tg', '<cmd>DotTheme gruvbox<CR>', { silent = true, desc = 'Theme: gruvbox' })
 vim.keymap.set('n', '<leader>tc', '<cmd>DotTheme codedark<CR>', { silent = true, desc = 'Theme: codedark' })
 
