@@ -5,7 +5,7 @@
 set -euo pipefail
 
 if ! command -v shellcheck &>/dev/null; then
-  echo "pre-commit: shellcheck not found, skipping (install with: brew install shellcheck)"
+  echo "pre-commit: shellcheck not found, skipping (install with: brew install shellcheck | sudo port install shellcheck)"
   exit 0
 fi
 

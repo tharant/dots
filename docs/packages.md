@@ -23,7 +23,7 @@ tools the bootstrap guarantees — and never touches it again. From then on
 the file is owned by the user: it records both the baseline and every
 package deliberately added since, and `packages update` resolves each
 entry against whatever package managers are actually installed on the
-machine (apt, apk, dnf, pacman, pkg, brew) and installs what is missing.
+machine (apt, apk, dnf, pacman, pkg, brew, port) and installs what is missing.
 
 The point is a single plain-text source of truth per machine: a fresh
 machine converges from a list of names with no per-platform bookkeeping,
@@ -45,7 +45,7 @@ also reachable as `dots packages <cmd>` (see [dots](dots.md)) and
 | --- | --- |
 | `status` | Report each entry's state (provided / installed / resolved / not here / no match). Read-only — no installs, no prompts, no writes. |
 | `install` | Resolve + install every wishlist entry that is not installed yet. No index refresh, no cleanup. |
-| `update` | `install`, plus refresh the backend indexes first (`apt-get update`, `brew update`, …) and clean them after (`brew cleanup`, `apt-get autoremove`, …). The full convergence. |
+| `update` | `install`, plus refresh the backend indexes first (`apt-get update`, `brew update`, `port selfupdate`, …) and clean them after (`brew cleanup`, `port reclaim`, `apt-get autoremove`, …). The full convergence. |
 | `refresh` | Apply wishlist edits in both directions: uninstall journaled installs that are no longer in the file (prompted y/n), then `install`. Hand-installed packages are never touched. |
 | `add <name> [@mgr:pkg ...]` | Append an entry to `~/.packages` and install it; an entry already in the wishlist is reported, not re-added. |
 | `init [template]` | Seed `~/.packages` from the repo template; refuses to overwrite. |
@@ -63,8 +63,12 @@ build-essential @apt:build-essential @apk:build-base @dnf:gcc-c++,make @brew:-
 debian-desktop @apt:task-gnome-desktop @apk:- @dnf:- @pacman:- @brew:-
 ```
 
-Resolution order is `apt apk dnf pacman pkg brew` (brew alone on macOS;
-Linuxbrew is consulted after the system package manager). The first backend
+Resolution order is `apt apk dnf pacman pkg brew` (Linuxbrew is consulted
+after the system package manager). On macOS only Homebrew and MacPorts are
+consulted, whichever are installed, native choice first — `port brew` on
+Intel Macs (Homebrew no longer supports Intel), `brew port` on Apple Silicon
+— the same rule as [dots-setup](dots-setup.md); `DOTS_MACOS_PKG_MGR` flips
+it. Pin MacPorts names with `@port:` (e.g. `@port:postgresql18`). The first backend
 offering the exact name — or a pinned alternative (`@apt:build-essential`)
 — wins. `@mgr:-` excludes a backend for that entry (a name that exists
 nowhere but Debian should not be offered on a Mac, and a
@@ -108,6 +112,7 @@ line and the machine forgets the package was ever shim-managed.
 | --- | --- | --- |
 | `DOTS_DIR` | Where to find the wishlist template | `~/.dots` |
 | `PACKAGES_FILE` | Wishlist path override | `~/.packages` |
+| `DOTS_MACOS_PKG_MGR` | macOS: `brew` or `port` is consulted first | unset (port first on Intel, brew first on Apple Silicon) |
 | `PACKAGES_STATE_DIR` | State directory (resolution cache + install journal) | `~/.local/state/packages` |
 
 ## Exit status

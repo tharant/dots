@@ -364,7 +364,7 @@ sdk_install_java() {
     # so source it in a subshell under the best available bash. Non-interactive
     # behavior comes from sdkman_auto_answer=true in ~/.sdkman/etc/config
     # (set by setup.sh); sdkman's own install is atomic (staging + move).
-    for candidate in "$BASH" bash /opt/homebrew/bin/bash /usr/local/bin/bash; do
+    for candidate in "$BASH" bash /opt/homebrew/bin/bash /opt/local/bin/bash /usr/local/bin/bash; do
         [ -n "$candidate" ] || continue
         if "$candidate" -c "(( \${BASH_VERSINFO[0]} >= 4 ))" 2>/dev/null; then
             bash4=$candidate

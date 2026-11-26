@@ -41,9 +41,11 @@ recorded are skipped). No index refresh, no cleanup.
 plus refresh the backend indexes first
 .RB ( "apt-get update" ,
 .BR "brew update" ,
+.BR "port selfupdate" ,
 etc.)
 and clean them after
 .RB ( "brew cleanup" ,
+.BR "port reclaim" ,
 .BR "apt-get autoremove" ,
 etc.).
 The full convergence.
@@ -96,9 +98,16 @@ Never resolve this entry on backend
 .PP
 The first backend offering an exact match (or a pinned alternative) wins.
 .SH BACKENDS
-Checked in this order; the first available one wins. macOS is brew-only;
-on Linux and BSD Homebrew is consulted after the system package manager
-(Linuxbrew).
+Checked in this order; the first available one wins. On Linux and BSD
+Homebrew is consulted after the system package manager (Linuxbrew). On
+macOS only
+.B brew
+and
+.B port
+are consulted, whichever are installed: MacPorts first on Intel Macs
+(which Homebrew no longer supports), Homebrew first on Apple Silicon;
+.B DOTS_MACOS_PKG_MGR
+overrides the order.
 .TP
 .B apt
 apt-get installs, apt-cache lookups; the index is refreshed
@@ -126,6 +135,17 @@ FreeBSD
 .B brew
 Homebrew formulas and casks. Brew is intended to run as the user, never
 through the privilege prefix.
+.TP
+.B port
+MacPorts
+.RB ( "port \-N install" ,
+.BR "port \-N selfupdate" ,
+.BR "port \-N reclaim" ),
+always through the privilege prefix; a port counts as installed when it
+is active. Found on
+.B PATH
+or at
+.IR /opt/local/bin/port .
 .PP
 Privileged installs run under
 .B sudo
@@ -176,6 +196,15 @@ only stops being managed \- nothing is removed.
 .B DOTS_DIR
 Repository location used to find the wishlist template (default
 .IR ~/.dots ).
+.TP
+.B DOTS_MACOS_PKG_MGR
+macOS only:
+.B brew
+or
+.B port
+is consulted first. Unset, MacPorts comes first on Intel and Homebrew on
+Apple Silicon, matching
+.BR dots\-setup (1).
 .TP
 .B PACKAGES_FILE
 Overrides the wishlist path (default
