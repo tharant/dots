@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Purpose
 
-Central dotfiles repository for bash across macOS, Debian flavors, Alpine, WSL2, and occasionally BSD. Hosted publicly on GitHub. Contains both public configs and encrypted secrets (SSH private keys, tokens, etc.). All blessed targets should look and behave identically: platform deltas live in per-platform Stow packages, never in conditionals inside `common/`.
+Central dotfiles repository for bash across macOS, Debian flavors, Alpine, WSL2, and occasionally BSD (Fedora/EL/openSUSE/Arch are best effort: dnf, zypper, pacman; EL gets EPEL + CRB). Hosted publicly on GitHub. Contains both public configs and encrypted secrets (SSH private keys, tokens, etc.). All blessed targets should look and behave identically: platform deltas live in per-platform Stow packages, never in conditionals inside `common/`.
 
 ## Architecture
 

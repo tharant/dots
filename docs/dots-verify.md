@@ -153,6 +153,9 @@ integration](direnv-runtimes.md):
   script's directory) and exported to child processes.
 - `PATH` — searched when checking that `age`, `stow`, and `git` are
   installed, and for the soft `direnv`, `uv`, and `fnm` presence checks.
+  `~/.local/bin` is appended when missing (dots-setup puts its user-level
+  fallbacks there, and a non-interactive `ssh host cmd` / `su -c` / cron
+  `PATH` does not carry it), so those installs are not misreported.
 
 ## Exit status
 

@@ -122,11 +122,28 @@ Lookups run from the local cache
 .RI ( \-\-cacheonly );
 distributions refresh their own metadata.
 .TP
+.B zypper
+openSUSE / SLES.
+.B "zypper \-\-non\-interactive install \-\-no\-recommends"
+installs; lookups use the cached metadata
+.RB ( \-\-no\-refresh );
+exact search is case\-insensitive, so the real package name is recorded
+(shellcheck resolves to ShellCheck);
+.B update
+runs
+.BR "zypper refresh" .
+.TP
 .B pacman
 .B "pacman \-S \-\-needed \-\-noconfirm"
-installs; the sync database is refreshed
-.RB ( \-Sy )
-before the first resolution.
+installs;
+.B update
+syncs and upgrades with
+.B \-Syu
+(a bare
+.B \-Sy
+followed by
+.B \-S
+is an unsupported partial upgrade).
 .TP
 .B pkg
 FreeBSD

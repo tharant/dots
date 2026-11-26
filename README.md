@@ -1,6 +1,6 @@
 # dots
 
-Dotfiles for bash across macOS, Debian flavors, Alpine, WSL2, and (occasionally) BSD — deployed identically everywhere. Managed with [GNU Stow](https://www.gnu.org/software/stow/), encrypted secrets via [age](https://github.com/FiloSottile/age), and a bootstrap that auto-installs everything it needs.
+Dotfiles for bash across macOS, Debian flavors, Alpine, WSL2, best-effort rpm distros (Fedora, EL, openSUSE) and Arch, and (occasionally) BSD — deployed identically everywhere. Managed with [GNU Stow](https://www.gnu.org/software/stow/), encrypted secrets via [age](https://github.com/FiloSottile/age), and a bootstrap that auto-installs everything it needs.
 
 ## Quick Start
 
@@ -32,6 +32,7 @@ apk add bash git curl && curl -fsSL https://raw.githubusercontent.com/tharant/do
 | Debian bookworm/trixie | `common/` + `linux/` | `just` on bookworm comes from a GitHub release binary; node 22 from upstream tarball if apt's is older |
 | Alpine 3.22+ | `common/` + `linux/` + `alpine/` | setup.sh ensures the `community` repo, `bash`, `shadow`, `ncurses-terminfo` |
 | WSL2 (Debian/Alpine) | as above + `wsl/` | Windows PATH trimmed, `clip.exe`-aware clipboard |
+| Fedora, Rocky/Alma/CentOS Stream, openSUSE, Arch (best effort) | `common/` + `linux/` | dnf / zypper / pacman; EL enables EPEL + CRB; `just`/`direnv` fall back to static binaries where unpackaged |
 | FreeBSD | `common/` + `bsd/` | best effort, not a priority |
 
 Detection: `uname -s` (platform), `/etc/os-release` (distro), `/proc/version` + `$WSL_DISTRO_NAME` (WSL), `uname -r` (OrbStack, informational).

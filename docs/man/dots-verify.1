@@ -299,6 +299,11 @@ are installed, and for the soft
 and
 .B fnm
 presence checks.
+.I ~/.local/bin
+is appended when missing: dots\-setup installs its user\-level fallbacks
+there, and a non\-interactive ssh, su or cron
+.B PATH
+does not carry it.
 .SH EXIT STATUS
 .TP
 .B 0

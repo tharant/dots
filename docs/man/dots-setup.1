@@ -87,8 +87,27 @@ and anything ending in
 .B BSD
 to
 .B bsd ;
-anything else is a fatal error. On Linux the distribution ID is read from
-.I /etc/os-release .
+anything else is a fatal error. On Linux the distribution
+.B ID
+and
+.B ID_LIKE
+are read from
+.I /etc/os-release
+in a subshell (its variables do not leak into the script); distro checks
+match either, so derivatives are handled by family (postmarketOS as
+Alpine; Rocky, Alma and CentOS as EL). Outside macOS,
+.IR /sbin ,
+.I /usr/sbin
+and
+.I /usr/local/sbin
+are appended to
+.B PATH
+for the run when missing: a non\-root sshd, su or cron
+.B PATH
+of
+.I /usr/bin:/bin
+would otherwise hide Alpine's
+.IR /sbin/apk .
 WSL is detected from
 .B WSL_DISTRO_NAME
 or by finding \(dqmicrosoft\(dq in
@@ -99,18 +118,32 @@ On macOS the package manager is Homebrew or MacPorts, chosen as described
 under
 .B macos
 below. Elsewhere package manager detection tries, in order:
-.BR brew ,
 .BR apt\-get ,
 .BR dnf ,
+.BR zypper ,
 .BR pacman ,
 .BR apk ,
-.BR pkg .
-Finding none of them is a fatal error. With
-.BR apt\-get ,
-.B apt\-get update
-(with MacPorts,
-.BR "port selfupdate" )
-is run once before the first installation. Batch installs are retried
+.BR pkg ,
+then
+.B brew
+(the system package manager always wins over Linuxbrew). Finding none of
+them is a fatal error. The index is refreshed once, before the first
+installation:
+.BR "apt\-get update" ,
+.BR "zypper refresh" ,
+.B pacman \-Syu
+(a full upgrade, since
+.B \-Sy
+followed by
+.B \-S
+is an unsupported partial upgrade) and, with MacPorts,
+.BR "port selfupdate" .
+apt runs with
+.BR DEBIAN_FRONTEND=noninteractive ,
+zypper with
+.B \-\-non\-interactive \-\-no\-recommends
+and pacman with
+.BR \-\-needed . Batch installs are retried
 package by package if the batch fails, so one missing or renamed package
 does not sink the whole set; individual failures are recorded as
 non\-fatal.
@@ -233,21 +266,45 @@ is missing, the step is skipped with a recorded failure.
 .TP
 .B Linux (other)
 Installs git, age, stow, just, tmux, shellcheck, bash, coreutils, direnv,
-curl, ca\-certificates with whichever of dnf, pacman or pkg is detected.
+curl, ca\-certificates, jq, bc, tar, gzip (minimal EL and openSUSE images
+lack the last two) with whichever of dnf, zypper or pacman is detected. On the RHEL family (dnf with
+.B ID
+or
+.B ID_LIKE
+rhel or centos: Rocky, Alma, CentOS Stream, RHEL) EPEL is enabled first
+(epel\-release from the distribution's repositories, else the
+epel\-release\-latest\-<major> rpm from dl.fedoraproject.org), then CRB
+.RB ( "crb enable" ,
+.B subscription\-manager
+on RHEL, else
+.B dnf config\-manager
+for crb or powertools), since age, stow and shellcheck live there; both
+steps are non\-fatal. EPEL still lacks direnv (EL9, EL10) and just (EL9),
+which the static fallbacks cover.
 .TP
 .B bsd
-Installs git, age, stow, just, tmux, shellcheck, bash, coreutils, direnv,
-curl, ca_root_nss via
-.BR pkg .
+Installs git, age, stow, just, tmux, hs\-ShellCheck (FreeBSD's name for
+ShellCheck), bash, coreutils, direnv, curl, ca_root_nss, jq via
+.B pkg
+(bc is part of the base system).
 .PP
 After the platform\-specific installs, tmux\-mem\-cpu\-load is installed for
 the tmux\-powerline mem/cpu segment: as the Homebrew formula or MacPorts
-port on macOS, built from source at the pinned upstream release (v3.8.3)
+port on macOS or the pkg package on FreeBSD, built from source at the pinned upstream release (v3.8.3)
 on Linux, where neither Debian nor Alpine packages it (pulling in the
 native C++ toolchain plus cmake: build\-essential on apt, build\-base on
-apk, gcc\-c++ and make on dnf, base\-devel on pacman), and skipped with a
+apk, gcc\-c++ and make on dnf and zypper, base\-devel on pacman), and skipped with a
 recorded non\-fatal failure for any other package manager or platform; on
-failure the mem/cpu segment simply drops out of the status bar. Then a
+failure the mem/cpu segment simply drops out of the status bar. On Linux
+a still\-missing
+.B just
+falls back to the upstream static musl binary (1.58.0) and a
+still\-missing
+.B shellcheck
+(openSUSE Leap 16 has no package) to the upstream static binary
+(v0.11.0), both into
+.IR /usr/local/bin ,
+whatever the package manager. Then a
 post\-install check verifies git,
 curl, just, tmux and shellcheck (each missing tool is recorded as a
 non\-fatal failure), treats a missing
@@ -261,7 +318,21 @@ way when no
 .B direnv
 binary exists \- but direnv is a hard requirement: if the fallback also
 fails the run aborts, because the direnv stow package is useless without its
-hook binary.
+hook binary. Fallbacks into
+.I ~/.local/bin
+(age, direnv, uv, fnm) put that directory on
+.B PATH
+for the rest of the run, so
+.BR dots\-decrypt (1)
+finds a fallback age;
+.I .bashrc
+adds it for interactive shells. Finally an
+.RI \(dqinstall: " tool" \(dq
+failure recorded by a package retry is dropped again when a fallback put
+the tool on
+.B PATH
+(just and direnv on EL), so a covered package does not change the exit
+status.
 .PP
 Runtime managers (macOS, Linux and WSL only; BSD is dotfiles\-only and skips
 this step with an informational message): after the post\-install checks the
@@ -551,13 +622,15 @@ Appended on macOS with the Homebrew or MacPorts bash path.
 MacPorts prefix (installed on Intel Macs).
 .TP
 .I ~/.local/bin/age ", " ~/.local/bin/age\-keygen
-Static age fallback location (mode 0755); a warning suggests adding the
-directory to
+Static age fallback location (mode 0755); added to
 .B PATH
-if it is not already there.
+for the rest of the run.
 .TP
 .I ~/.local/bin/direnv
 Static direnv fallback location (0755).
+.TP
+.I /usr/local/bin/shellcheck
+Static shellcheck fallback (any Linux without a shellcheck package).
 .TP
 .I ~/.local/bin/uv ", " ~/.local/bin/fnm
 Runtime\-manager binaries (macOS/Linux/WSL only).
@@ -569,7 +642,8 @@ set in
 .IR etc/config .
 .TP
 .I /usr/local/bin/just ", " /usr/local/lib/nodejs
-Static just and Node.js fallback locations (Debian only); the extraction
+Static just fallback (any Linux without a just package) and Node.js
+tarball fallback (Debian only) locations; the extraction
 directory is created by the script when missing.
 .TP
 .I ~/.packages
