@@ -3,6 +3,9 @@
 " with this marker so its setup.sh sees the file as wired and leaves the stow
 " symlink alone; the path is $HOME-relative so it works on every machine.
 " vimrc.common defaults g:vimtutor_data to ~/.local/share/vimtutor itself.
+" dots owns the colorscheme and status line (DotTheme, airline below), so
+" vimtutor must not apply its own (its g:vimtutor_ui setting).
+let g:vimtutor_ui = 'off'
 if filereadable(expand('~/.local/share/vimtutor/config/vimrc.common'))
   source ~/.local/share/vimtutor/config/vimrc.common
 endif
@@ -20,7 +23,13 @@ filetype off                  " re-enabled by plug#end() below
 " an error prompt on every startup. Load it — and bind its mappings — only
 " when node exists (see ~/.vim/MYDOTS.md "Requirements"). node comes from
 " fnm via the runtimes CLI (docs/direnv-runtimes.md); vim finds it on PATH.
-let s:coc_ok = executable('node')
+" Under sudo/doas (e.g. `sudo vim /etc/hosts`) $HOME is still yours on
+" macOS, so coc would install its extensions into ~/.config/coc and npm
+" would cache into ~/.npm AS ROOT, leaving both unwritable for you later.
+" Root sessions get no coc and no plugin auto-install; use `sudoedit` to
+" edit system files with your full setup.
+let s:sudo = !empty($SUDO_USER) || !empty($DOAS_USER)
+let s:coc_ok = executable('node') && !s:sudo
 
 call plug#begin('~/.vim/plugged')
 Plug 'morhetz/gruvbox'                          " dark colorscheme (DotTheme gruvbox)
@@ -42,7 +51,7 @@ call plug#end()
 
 " First-run bootstrap: if any declared plugin isn't on disk yet, install
 " before anything else runs, then re-source this file.
-if len(filter(values(g:plugs), '!isdirectory(v:val.dir)'))
+if !s:sudo && len(filter(values(g:plugs), '!isdirectory(v:val.dir)'))
   autocmd VimEnter * PlugInstall --sync | source $MYVIMRC
 endif
 
@@ -141,22 +150,28 @@ if has('clipboard') && exists('+clipboard')
 endif
 
 " ----------------------------------------------------------------------
-" Theme switcher: `:DotTheme gruvbox` or `:DotTheme codedark`
-" The choice is written to ~/.vim/.theme and survives restarts.
+" Theme switcher: `:DotTheme default`, `:DotTheme gruvbox` or
+" `:DotTheme codedark`. An explicit choice is written to ~/.vim/.theme and
+" survives restarts; with no choice (file missing or unknown) 'default'
+" applies: xoria256 here, tokyonight-storm in nvim (one name, an editor-
+" native scheme each). Startup never writes the file, so "no choice"
+" stays that way and tracks the dots default.
 " ----------------------------------------------------------------------
 let s:theme_file = expand('~/.vim/.theme')
 let s:themes = {
+      \ 'default':  {'colorscheme': 'xoria256', 'airline': 'minimalist'},
       \ 'gruvbox':  {'colorscheme': 'gruvbox',  'airline': 'gruvbox'},
       \ 'codedark': {'colorscheme': 'codedark', 'airline': 'codedark'},
       \ }
 
 function! s:LoadTheme() abort
-  let name = filereadable(s:theme_file) ? trim(readfile(s:theme_file)[0]) : 'codedark'
-  return has_key(s:themes, name) ? name : 'codedark'
+  let name = filereadable(s:theme_file) ? trim(get(readfile(s:theme_file), 0, '')) : 'default'
+  return has_key(s:themes, name) ? name : 'default'
 endfunction
 
-" Second (optional) argument: quiet — apply without a message. Startup uses
-" it so opening vim doesn't echo anything; interactive :DotTheme confirms.
+" Second (optional) argument: quiet — apply without a message or persisting.
+" Startup uses it so opening vim neither echoes nor writes ~/.vim/.theme;
+" interactive :DotTheme confirms and persists.
 function! s:SetTheme(name, ...) abort
   if !has_key(s:themes, a:name)
     echohl WarningMsg
@@ -170,8 +185,8 @@ function! s:SetTheme(name, ...) abort
   endif
   let g:gruvbox_italic = 1
   execute 'colorscheme' t.colorscheme
-  call writefile([a:name], s:theme_file)
   if !(a:0 && a:1)
+    call writefile([a:name], s:theme_file)
     echomsg 'Theme set to ' . a:name . ' (persisted to ' . s:theme_file . ')'
   endif
 endfunction
@@ -181,7 +196,8 @@ function! s:ThemeComplete(arglead, cmdline, cursorpos) abort
   return filter(sort(keys(s:themes)), 'v:val =~# "^" . a:arglead')
 endfunction
 
-" Leader mappings for quick switching: <leader>tg / <leader>tc
+" Leader mappings for quick switching: <leader>td / <leader>tg / <leader>tc
+nnoremap <silent> <leader>td :DotTheme default<CR>
 nnoremap <silent> <leader>tg :DotTheme gruvbox<CR>
 nnoremap <silent> <leader>tc :DotTheme codedark<CR>
 

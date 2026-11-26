@@ -17,7 +17,7 @@
 # tmux-powerline core (lib/powerline.sh) via sourcing this file, so most
 # assignments are legitimately "unused" from this file's own point of view.
 
-_tpl_theme=codedark
+_tpl_theme=default
 if [ -r "${HOME}/.vim/.theme" ]; then
 	_tpl_theme=$(tr -d '[:space:]' <"${HOME}/.vim/.theme")
 fi
@@ -36,10 +36,8 @@ gruvbox)
 	TPL_ORANGE="#fe8019"
 	TPL_PURPLE="#d3869b"
 	;;
-*)
+codedark)
 	# VS Code Dark+ (vim-code-dark / tomasiser/vim-code-dark)
-	# Also the fallthrough for missing/unrecognized .theme values, matching
-	# .vimrc's own codedark default.
 	TPL_BG="#1e1e1e" # status bar base        (editor.background)
 	TPL_PILL="#252526" # recessed pill        (sideBar.background)
 	TPL_PILL_HI="#333333" # brighter pill      (badge background)
@@ -50,6 +48,21 @@ gruvbox)
 	TPL_YELLOW="#dcdcaa"
 	TPL_ORANGE="#ce9178"
 	TPL_PURPLE="#c586c0"
+	;;
+*)
+	# tokyonight-storm (folke/tokyonight.nvim): the 'default' theme, also the
+	# fallthrough for a missing/unrecognized .theme, matching the editors'
+	# own default (nvim: tokyonight-storm; vim: xoria256).
+	TPL_BG="#1f2335" # bg_dark
+	TPL_PILL="#292e42" # bg_highlight
+	TPL_PILL_HI="#3b4261" # fg_gutter
+	TPL_FG="#c0caf5" # fg
+	TPL_FG_DIM="#737aa2" # dark5
+	TPL_ACCENT="#7aa2f7" # blue
+	TPL_GREEN="#9ece6a"
+	TPL_YELLOW="#e0af68"
+	TPL_ORANGE="#ff9e64"
+	TPL_PURPLE="#bb9af7"
 	;;
 esac
 unset -v _tpl_theme

@@ -2,7 +2,7 @@
 # tmux-powerline configuration — sourced by the plugin before themes/segments
 # on every status refresh (see ~/.config/tmux-powerline/tmux-powerline/config_file.sh).
 # Paired with themes/dots.sh, which follows the vim DotTheme choice in
-# ~/.vim/.theme (gruvbox | codedark).
+# ~/.vim/.theme (default | gruvbox | codedark).
 
 # Load this repo's theme from this package's themes/ dir. The plugin never
 # defaults TMUX_POWERLINE_DIR_USER_THEMES — without these lines it silently
