@@ -1,11 +1,15 @@
 
 -- >>> vimtutor >>> (managed block; removed by setup.sh --uninstall)
-local vimtutor_ok = pcall(function()
-  vim.cmd("let g:vimtutor_data = '/home/jlambert/.local/share/vimtutor'")
-  vim.cmd("source /home/jlambert/.local/share/vimtutor/config/vimrc.common")
-end)
-if not vimtutor_ok then
-  vim.notify("vimtutor: setup incomplete -- re-run setup.sh", vim.log.levels.WARN)
+-- Optional: VIMTUTOR ADVANCED (github.com/tharant/vimtutor). Kept in dots
+-- with this marker so its setup.sh sees the file as wired and leaves the stow
+-- symlink alone; the path is $HOME-relative so it works on every machine.
+-- vimrc.common defaults g:vimtutor_data to ~/.local/share/vimtutor itself.
+local vimtutor_rc = vim.fn.expand("~/.local/share/vimtutor/config/vimrc.common")
+if vim.fn.filereadable(vimtutor_rc) == 1 then
+  local ok, err = pcall(vim.cmd.source, vimtutor_rc)
+  if not ok then
+    vim.notify("vimtutor: " .. tostring(err), vim.log.levels.WARN)
+  end
 end
 -- <<< vimtutor <<<
 -- dots nvim config — kept in lockstep with ~/.vimrc: same options, the same
