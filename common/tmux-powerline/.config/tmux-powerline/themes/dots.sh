@@ -2,7 +2,8 @@
 # "dots" theme for tmux-powerline.
 #
 # Follows the vim DotTheme choice in ~/.vim/.theme (`:DotTheme gruvbox` /
-# `:DotTheme codedark` in .vimrc writes it; gruvbox is the default), so the
+# `:DotTheme codedark`, written from EITHER editor — .vimrc and nvim's
+# identical :DotTheme share this file; codedark is the default), so the
 # tmux status bar, the vim statusline and the trueline prompt all shift
 # palette together. Sourced once per powerline.sh render (and once when
 # main.tmux applies the settings), so keep it cheap.
@@ -16,26 +17,13 @@
 # tmux-powerline core (lib/powerline.sh) via sourcing this file, so most
 # assignments are legitimately "unused" from this file's own point of view.
 
-_tpl_theme=gruvbox
+_tpl_theme=codedark
 if [ -r "${HOME}/.vim/.theme" ]; then
 	_tpl_theme=$(tr -d '[:space:]' <"${HOME}/.vim/.theme")
 fi
 
 case "${_tpl_theme}" in
-codedark)
-	# VS Code Dark+ (vim-code-dark / tomasiser/vim-code-dark)
-	TPL_BG="#1e1e1e" # status bar base        (editor.background)
-	TPL_PILL="#252526" # recessed pill        (sideBar.background)
-	TPL_PILL_HI="#333333" # brighter pill      (badge background)
-	TPL_FG="#d4d4d4" # primary text           (editor.foreground)
-	TPL_FG_DIM="#858585" # secondary text
-	TPL_ACCENT="#569cd6" # blue badge         (variable language color)
-	TPL_GREEN="#4ec9b4"
-	TPL_YELLOW="#dcdcaa"
-	TPL_ORANGE="#ce9178"
-	TPL_PURPLE="#c586c0"
-	;;
-*)
+gruvbox)
 	# Gruvbox dark (morhetz/gruvbox)
 	TPL_BG="#282828" # bg0
 	TPL_PILL="#3c3836" # bg1
@@ -47,6 +35,21 @@ codedark)
 	TPL_YELLOW="#fabd2f"
 	TPL_ORANGE="#fe8019"
 	TPL_PURPLE="#d3869b"
+	;;
+*)
+	# VS Code Dark+ (vim-code-dark / tomasiser/vim-code-dark)
+	# Also the fallthrough for missing/unrecognized .theme values, matching
+	# .vimrc's own codedark default.
+	TPL_BG="#1e1e1e" # status bar base        (editor.background)
+	TPL_PILL="#252526" # recessed pill        (sideBar.background)
+	TPL_PILL_HI="#333333" # brighter pill      (badge background)
+	TPL_FG="#d4d4d4" # primary text           (editor.foreground)
+	TPL_FG_DIM="#858585" # secondary text
+	TPL_ACCENT="#569cd6" # blue badge         (variable language color)
+	TPL_GREEN="#4ec9b4"
+	TPL_YELLOW="#dcdcaa"
+	TPL_ORANGE="#ce9178"
+	TPL_PURPLE="#c586c0"
 	;;
 esac
 unset -v _tpl_theme

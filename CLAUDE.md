@@ -44,6 +44,8 @@ dots/
 ├── scripts/
 │   ├── setup.sh     # Bootstrap (curl-able): pkg_install dispatcher, platform/distro/env
 │   │                #   detection (macos/linux/bsd + alpine + wsl layers), decrypt, stow
+│   │                #   (macOS: Homebrew on Apple Silicon, MacPorts on Intel —
+│   │                #   Homebrew dropped Intel; DOTS_MACOS_PKG_MGR=brew|port overrides)
 │   ├── verify.sh    # Symlink + permissions health check (stow-ignore aware)
 │   ├── encrypt.sh   # Encrypt a file (age key + passphrase copies)
 │   └── decrypt.sh   # Decrypt secrets (age key if present, else passphrase)
@@ -60,7 +62,7 @@ dots/
 
 `.bashrc` sources every file in `~/.bashrc.platform.d/` (2-line hook — the only sanctioned conditional in `common/` besides `command -v` guards for optional tools). Each platform package ships a `bash/.bashrc.platform.d/<name>.sh`:
 
-- `macos/` → `macos.sh` (locale `en_US.UTF-8`, brew shellenv arch-aware, LSCOLORS, macOS-only functions)
+- `macos/` → `macos.sh` (locale `en_US.UTF-8`, brew shellenv + MacPorts `/opt/local` PATH, ordered like setup.sh's pick, LSCOLORS, macOS-only functions)
 - `linux/` → `linux.sh` (locale with C.UTF-8 fallback, dircolors)
 - `alpine/` → `alpine.sh` (`C.UTF-8` — musl has no `en_US.UTF-8`; shipped for Alpine incl. WSL-Alpine)
 - `wsl/` → `wsl.sh` (self-detects via `/proc/version`; trims `/mnt/[a-z]` PATH entries, absolute-path `clip.exe`)

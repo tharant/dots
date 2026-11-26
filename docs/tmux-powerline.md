@@ -24,7 +24,7 @@ tmux-powerline — plugin-managed tmux status bar for the dots repo
 `.tmux.conf` does **not** use tpm. Its final lines are:
 
 ```
-set-environment -g PATH "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
+set-environment -g PATH "/usr/local/bin:/opt/homebrew/bin:/opt/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 if-shell -F "test -x $HOME/.config/tmux-powerline/tmux-powerline/main.tmux" \
     "run-shell 'bash $HOME/.config/tmux-powerline/tmux-powerline/main.tmux'"
 ```
@@ -39,7 +39,7 @@ if-shell -F "test -x $HOME/.config/tmux-powerline/tmux-powerline/main.tmux" \
   inherits sshd's non-interactive `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`):
   `tmux set-option` inside `main.tmux` then fails with "command not found",
   errexit aborts the loader, and the fallback bar sticks — while a server
-  started from an interactive login (brew shellenv on `PATH`) gets the
+  started from an interactive login (brew shellenv / MacPorts on `PATH`) gets the
   powerline bar. With the pinned `PATH`, every `run-shell`/`#(…)` job is
   self-sufficient no matter how the server booted; interactive panes re-derive
   `PATH` in `.bashrc` (brew shellenv, `~/bin`, …) regardless.
@@ -69,9 +69,10 @@ platform.
 `themes/dots.sh` is the one custom file of consequence. It:
 
 - reads `~/.vim/.theme` (what [.vimrc](../common/vim/.vimrc)'s `:DotTheme
-  gruvbox|codedark` command writes; gruvbox is the default), falling back to
-  the gruvbox palette if the file is missing — the tmux bar, the vim
-  statusline and the trueline prompt therefore switch palette together;
+  gruvbox|codedark` command writes; codedark is the default), falling back to
+  the codedark palette if the file is missing or unrecognized — the tmux bar,
+  the vim statusline and the trueline prompt therefore switch palette
+  together;
 - defines the `TMUX_POWERLINE_SEPARATOR_*` glyphs **itself** (a custom theme
   inherits nothing from upstream `default.sh`; omitting the separators yields
   a bar with no triangles). Nerd Font glyphs are built with `printf '\xee\x82\xb0'`

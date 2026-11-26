@@ -30,6 +30,12 @@ fi
 
 # Linuxbrew
 if [[ -s /home/linuxbrew/.linuxbrew/bin/brew ]]; then
+  export HOMEBREW_NO_ANALYTICS=1
   eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
   [[ -r "/home/linuxbrew/.linuxbrew/etc/profile.d/bash_completion.sh" ]] && . "/home/linuxbrew/.linuxbrew/etc/profile.d/bash_completion.sh"
 fi
+
+# Rust toolchain (rustup): cargo/rustc on PATH when installed; guarded so
+# non-Rust boxes keep a clean login. (Sourcing here keeps it off macOS/Alpine
+# where cargo isn't part of the working set today.)
+[[ -f "$HOME/.cargo/env" ]] && . "$HOME/.cargo/env"

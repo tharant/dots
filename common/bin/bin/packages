@@ -5,7 +5,7 @@ set -euo pipefail
 # file itself is seeded from templates/packages/.packages by dots-setup).
 # Reads a per-machine wishlist (one entry per line, '#' comments allowed),
 # resolves each entry against whatever backends are actually installed — apt,
-# apk, dnf, pacman, pkg (BSD), brew (the only one on a pristine Mac) — and
+# apk, dnf, pacman, pkg (BSD), brew / port (MacPorts) on macOS — and
 # installs what is missing. Bare names are tried by exact match in backend
 # priority order; @mgr:alt,alt2 pins override the name on that backend and
 # @mgr:- excludes it entirely. An entry matching nowhere is resolved once
@@ -73,8 +73,9 @@ Commands:
   install           Resolve and install every wishlist entry that is not
                     installed yet. No index refresh, no cleanup.
   update            install, plus refresh the backend indexes first (apt-get
-                    update, brew update, ...) and clean them after (brew
-                    cleanup, apt/dnf/pkg autoremove). The full convergence.
+                    update, brew update, port selfupdate, ...) and clean
+                    them after (brew cleanup, port reclaim, apt/dnf/pkg
+                    autoremove). The full convergence.
   refresh           Apply wishlist edits in both directions: install new
                     entries (as install does), and uninstall packages this
                     shim itself installed that are no longer in the file.
@@ -94,8 +95,9 @@ Entry syntax (in ~/.packages and in `add`):
   name @brew:-        never resolve this entry on brew
   # ...               comments and blank lines are ignored
 
-Backends, in resolution order: apt, apk, dnf, pacman, pkg, brew (brew alone
-on macOS). The first backend with the exact name (or a pin) wins; the choice
+Backends, in resolution order: apt, apk, dnf, pacman, pkg, brew. On macOS
+only brew and port (MacPorts) are consulted: port first on Intel, brew first
+on Apple Silicon (DOTS_MACOS_PKG_MGR=brew|port overrides). The first backend with the exact name (or a pin) wins; the choice
 is recorded in ~/.local/state/packages/resolutions and reused. Packages this
 shim installs are journaled in ~/.local/state/packages/installed — that
 journal is the only thing `refresh` ever uninstalls from.
@@ -147,7 +149,7 @@ detect_priv() {
 
 run_priv() {
     # run_priv <cmd...> — same as "$PRIV $@" when not already root (brew is
-    # never called through this: it must run as the user)
+    # never called through this: it must run as the user; port always is)
     if [ "$(id -u)" -eq 0 ]; then
         "$@"
     else
@@ -240,13 +242,33 @@ is_provided() {
 # --- Backends -------------------------------------------------------------------
 
 detect_backends() {
-    # Ordered by resolution priority; macOS is brew-only. Linux/BSD consult
-    # Homebrew as a fallback after the system package manager (Linuxbrew).
+    # Ordered by resolution priority. macOS consults Homebrew and MacPorts,
+    # whichever are installed, native choice first: MacPorts on Intel (which
+    # Homebrew no longer supports), Homebrew on Apple Silicon — the same rule
+    # as dots-setup, including the DOTS_MACOS_PKG_MGR=brew|port override.
+    # Linux/BSD consult Homebrew as a fallback after the system package
+    # manager (Linuxbrew).
     BE_LIST=""
-    local b
+    local b order
     case "$(uname -s)" in
         Darwin)
-            BE_LIST="brew"
+            case "${DOTS_MACOS_PKG_MGR:-}" in
+                brew) order="brew port" ;;
+                port) order="port brew" ;;
+                *)
+                    if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = "1" ]; then
+                        order="brew port"
+                    else
+                        order="port brew"
+                    fi
+                    ;;
+            esac
+            if ! command -v port >/dev/null 2>&1 && [ -x /opt/local/bin/port ]; then
+                PATH="/opt/local/bin:/opt/local/sbin:$PATH"
+            fi
+            for b in $order; do
+                command -v "$b" >/dev/null 2>&1 && BE_LIST="$BE_LIST $b"
+            done
             ;;
         *)
             for b in apt-get apk dnf pacman pkg brew; do
@@ -312,6 +334,14 @@ be_has() {
                 fi
             done
             ;;
+        port)
+            for p in "$@"; do
+                if port -q info --name "$p" >/dev/null 2>&1; then
+                    BE_MATCH="$p"
+                    return 0
+                fi
+            done
+            ;;
         brew)
             for p in "$@"; do
                 if [ -n "$(brew search --formula "^$p$" 2>/dev/null)" ] ||
@@ -333,6 +363,7 @@ be_installed() {
         dnf)    rpm -q "$pkg" >/dev/null 2>&1 ;;
         pacman) pacman -Qi "$pkg" >/dev/null 2>&1 ;;
         pkg)    pkg info -e "$pkg" >/dev/null 2>&1 ;;
+        port)   port -q installed "$pkg" 2>/dev/null | grep -q '(active)' ;;
         brew)   brew list --formula "$pkg" >/dev/null 2>&1 ||
                 brew list --cask "$pkg" >/dev/null 2>&1 ;;
         *)      return 1 ;;
@@ -347,6 +378,7 @@ be_install() {
         dnf)    run_priv dnf install -y "$pkg" ;;
         pacman) run_priv pacman -S --needed --noconfirm "$pkg" ;;
         pkg)    run_priv pkg install -y "$pkg" ;;
+        port)   run_priv port -N install "$pkg" ;;
         brew)
             if [ "$(id -u)" -eq 0 ]; then
                 warn "brew refuses to run as root — cannot install $pkg"
@@ -367,6 +399,7 @@ be_refresh() {
         apt)    run_priv apt-get update ;;
         apk)    run_priv apk update ;;
         pacman) run_priv pacman -Sy ;;
+        port)   run_priv port -N selfupdate ;;
         brew)   brew update ;;
         *)      return 0 ;;
     esac
@@ -380,6 +413,7 @@ be_uninstall() {
         dnf)    run_priv dnf remove -y "$pkg" ;;
         pacman) run_priv pacman -R --noconfirm "$pkg" ;;
         pkg)    run_priv pkg remove -y "$pkg" ;;
+        port)   run_priv port -N uninstall "$pkg" ;;
         brew)
             if [ "$(id -u)" -eq 0 ]; then
                 warn "brew refuses to run as root — cannot uninstall $pkg"
@@ -393,12 +427,14 @@ be_uninstall() {
 
 be_cleanup() {
     # be_cleanup <mgr> — best-effort orphan/stale-artifact removal; only
-    # manager-declared removable units (brew's stale versions, auto-installed
-    # and no longer required packages), never explicit wishes.
+    # manager-declared removable units (brew's stale versions, MacPorts'
+    # inactive ports and unrequested leaves, auto-installed and no longer
+    # required packages), never explicit wishes.
     case "$1" in
         apt)    run_priv apt-get autoremove -y ;;
         dnf)    run_priv dnf -y autoremove ;;
         pkg)    run_priv pkg autoremove -y ;;
+        port)   run_priv port -N reclaim ;;
         brew)   brew cleanup ;;
         *)      return 0 ;;
     esac
@@ -428,6 +464,10 @@ be_search() {
             ;;
         pkg)
             pkg search -q "^$term" 2>/dev/null | head -n "$SEARCH_MAX"
+            ;;
+        port)
+            port -q search --name --line "^$term" 2>/dev/null | awk '{print $1}' |
+                head -n "$SEARCH_MAX"
             ;;
         brew)
             brew search "$term" 2>/dev/null |
@@ -777,7 +817,7 @@ be_cleanups() {
     detect_priv
     for b in $BE_LIST; do
         case "$b" in
-            apt|dnf|pkg|brew)
+            apt|dnf|pkg|port|brew)
                 info "Cleaning up with $b..."
                 be_cleanup "$b" || warn "$b cleanup failed — continuing"
                 ;;
@@ -870,7 +910,7 @@ unfinished() {
 
 cmd_update() {
     detect_backends
-    [ -n "$BE_LIST" ] || die "no package manager backend found (apt, apk, dnf, pacman, pkg, brew)"
+    [ -n "$BE_LIST" ] || die "no package manager backend found (apt, apk, dnf, pacman, pkg, brew, port)"
     require_wishlist
     index_refresh
     install_wishes
@@ -881,7 +921,7 @@ cmd_update() {
 
 cmd_install() {
     detect_backends
-    [ -n "$BE_LIST" ] || die "no package manager backend found (apt, apk, dnf, pacman, pkg, brew)"
+    [ -n "$BE_LIST" ] || die "no package manager backend found (apt, apk, dnf, pacman, pkg, brew, port)"
     require_wishlist
     install_wishes
     unfinished && exit 2
@@ -890,7 +930,7 @@ cmd_install() {
 
 cmd_refresh() {
     detect_backends
-    [ -n "$BE_LIST" ] || die "no package manager backend found (apt, apk, dnf, pacman, pkg, brew)"
+    [ -n "$BE_LIST" ] || die "no package manager backend found (apt, apk, dnf, pacman, pkg, brew, port)"
     require_wishlist
     prune_journaled
     install_wishes
@@ -900,7 +940,7 @@ cmd_refresh() {
 
 cmd_status() {
     detect_backends
-    [ -n "$BE_LIST" ] || die "no package manager backend found (apt/apk/dnf/pacman/pkg/brew)"
+    [ -n "$BE_LIST" ] || die "no package manager backend found (apt/apk/dnf/pacman/pkg/brew/port)"
     require_wishlist
     info "wishlist: $PACKAGES_FILE; backends:$BE_LIST"
     iter_entries status
@@ -913,7 +953,7 @@ cmd_add() {
         -h|--help) usage 0 ;;
     esac
     detect_backends
-    [ -n "$BE_LIST" ] || die "no package manager backend found (apt/apk/dnf/pacman/pkg/brew)"
+    [ -n "$BE_LIST" ] || die "no package manager backend found (apt/apk/dnf/pacman/pkg/brew/port)"
     require_wishlist
     if wishlist_has "$1"; then
         info "$1 is already in $PACKAGES_FILE — nothing added"

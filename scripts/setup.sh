@@ -19,8 +19,9 @@ set -euo pipefail
 #     apk add bash git curl
 #     ./scripts/setup.sh        # or: wget -qO- <setup.sh url> | bash
 #
-# Blessed targets: macOS 14+, Debian bookworm & trixie, Alpine 3.22+ (including
-# the WSL2 flavours), FreeBSD best effort.
+# Blessed targets: macOS 14+ (Homebrew on Apple Silicon, MacPorts on Intel),
+# Debian bookworm & trixie, Alpine 3.22+ (including the WSL2 flavours),
+# FreeBSD best effort.
 
 REPO_URL="${DOTS_REPO_URL:-https://github.com/tharant/dots.git}"
 DOTS_DIR="${DOTS_DIR:-$HOME/.dots}"
@@ -32,6 +33,8 @@ ENV=""            # environment layer: "wsl" (distro layers live in DISTRO)
 PKG_MGR=""
 SUDO=""
 APT_UPDATED=""
+PORT_SYNCED=""
+MACPORTS_PREFIX="/opt/local"
 SUCCESS_MSG="Dotfiles deployed."
 AUDIT_LOG=""
 
@@ -46,6 +49,11 @@ Usage: $(basename "$0") [--restow] [--adopt] [--unstow] [--force] [--verify]
   --verify    Run verification checks on current deployment
 
 Privileges: run as root, or with sudo/doas available.
+
+macOS: an installed Homebrew or MacPorts is used as-is (both installed:
+Homebrew on Apple Silicon, MacPorts on Intel). With neither, Apple Silicon
+gets Homebrew and Intel gets MacPorts (Homebrew no longer supports Intel).
+Force the choice with DOTS_MACOS_PKG_MGR=brew|port.
 
 Alpine note: on a bare Alpine system the script needs bash, git and curl first:
   apk add bash git curl
@@ -215,6 +223,10 @@ detect_pkg_mgr() {
     if [[ -n "$PKG_MGR" ]]; then
         return 0
     fi
+    if [[ "$PLATFORM" == "macos" ]]; then
+        macos_select_pkg_mgr
+        return 0
+    fi
     local m
     for m in brew apt-get dnf pacman apk pkg; do
         if command_exists "$m"; then
@@ -240,8 +252,16 @@ pkg_install() {
         APT_UPDATED=true
     fi
 
+    # MacPorts likewise syncs its ports tree once per run
+    if [[ "$PKG_MGR" == "port" && "$PORT_SYNCED" != "true" ]]; then
+        info "Syncing the MacPorts ports tree (port selfupdate)..."
+        quiet run_priv port -N selfupdate || warn "port selfupdate failed — installing from the existing ports tree"
+        PORT_SYNCED=true
+    fi
+
     case "$PKG_MGR" in
         brew)    quiet brew install "$@" ;;                # brew must not run as root
+        port)    quiet run_priv port -N install "$@" ;;    # port must run as root
         apt-get) quiet run_priv apt-get install -y "$@" ;;
         dnf)     quiet run_priv dnf install -y "$@" ;;
         pacman)  quiet run_priv pacman -S --noconfirm "$@" ;;
@@ -427,12 +447,116 @@ install_node_tarball() {
 
 # --- Per-platform core installs ---
 
+# macOS package managers: Homebrew (Apple Silicon) and MacPorts (Intel).
+# Homebrew dropped Intel (x86_64) macOS support, so a pristine Intel Mac is
+# bootstrapped with MacPorts and a pristine Apple Silicon Mac with Homebrew.
+# An already-installed manager always wins over a fresh install; with both
+# present the architecture's native choice wins. DOTS_MACOS_PKG_MGR=brew|port
+# forces the choice (installing Homebrew on Intel is still refused).
+
+macos_is_apple_silicon() {
+    # Hardware check, not uname -m: a Rosetta-translated shell reports x86_64
+    [[ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" == "1" ]]
+}
+
+macos_path_add() {
+    # macos_path_add <dir> — prepend <dir> to PATH for the rest of this run
+    case ":$PATH:" in
+        *":$1:"*) ;;
+        *) export PATH="$1:$PATH" ;;
+    esac
+}
+
+macos_brew_bin() {
+    # Path of an installed brew (PATH first, then the two standard prefixes)
+    local b
+    if b="$(command -v brew 2>/dev/null)"; then
+        echo "$b"
+        return 0
+    fi
+    for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+        if [[ -x "$b" ]]; then
+            echo "$b"
+            return 0
+        fi
+    done
+    return 1
+}
+
+macos_port_bin() {
+    # Path of an installed MacPorts port(1)
+    local p
+    if p="$(command -v port 2>/dev/null)"; then
+        echo "$p"
+        return 0
+    fi
+    if [[ -x "$MACPORTS_PREFIX/bin/port" ]]; then
+        echo "$MACPORTS_PREFIX/bin/port"
+        return 0
+    fi
+    return 1
+}
+
+macos_select_pkg_mgr() {
+    # Sets PKG_MGR to brew or port, bootstrapping the manager when needed
+    local want="${DOTS_MACOS_PKG_MGR:-}" have_brew=false have_port=false
+    macos_brew_bin >/dev/null && have_brew=true
+    macos_port_bin >/dev/null && have_port=true
+
+    case "$want" in
+        ""|brew|port) ;;
+        *) error "DOTS_MACOS_PKG_MGR must be 'brew' or 'port' (got: $want)" ;;
+    esac
+
+    if [[ -z "$want" ]]; then
+        if [[ "$have_brew" == "true" && "$have_port" == "true" ]]; then
+            if macos_is_apple_silicon; then want="brew"; else want="port"; fi
+            info "Both Homebrew and MacPorts are installed — using $want (set DOTS_MACOS_PKG_MGR to override)"
+        elif [[ "$have_brew" == "true" ]]; then
+            want="brew"
+            if ! macos_is_apple_silicon; then
+                warn "Homebrew no longer supports Intel Macs — this install keeps working"
+                warn "for now, but consider MacPorts (https://www.macports.org)."
+            fi
+        elif [[ "$have_port" == "true" ]]; then
+            want="port"
+        elif macos_is_apple_silicon; then
+            want="brew"
+        else
+            want="port"
+        fi
+    fi
+
+    if [[ "$want" == "brew" && "$have_brew" != "true" ]] && ! macos_is_apple_silicon; then
+        error "Homebrew no longer supports Intel Macs — refusing to install it. Unset DOTS_MACOS_PKG_MGR to bootstrap MacPorts instead."
+    fi
+
+    PKG_MGR="$want"
+    case "$PKG_MGR" in
+        brew)
+            # Privacy: keep Homebrew from calling home, both for the bootstrap
+            # run itself and for every install it performs. The same exports
+            # live in the macos platform layer for interactive shells.
+            export HOMEBREW_NO_ANALYTICS=1
+            export HOMEBREW_NO_ENV_HINTS=1
+            install_homebrew
+            ;;
+        port)
+            install_macports
+            ;;
+    esac
+    info "Detected package manager: $PKG_MGR"
+}
+
 install_homebrew() {
-    # A pristine Mac has neither brew nor any other supported package manager,
-    # so bootstrap Homebrew itself via the official installer. The installer
+    # A pristine Apple Silicon Mac has no supported package manager, so
+    # bootstrap Homebrew itself via the official installer. The installer
     # must run as the user (it invokes sudo itself for the prefix directory);
     # NONINTERACTIVE=1 skips the "press RETURN" pause so curl | bash works.
-    if command_exists brew; then
+    local brew_bin
+    if brew_bin="$(macos_brew_bin)"; then
+        # Installed but maybe not on PATH yet (fresh curl | bash shell)
+        macos_path_add "$(dirname "$brew_bin")"
         return 0
     fi
     if [[ $EUID -eq 0 ]]; then
@@ -445,36 +569,107 @@ install_homebrew() {
     fi
     # Put brew on PATH for the rest of this run; the shellenv itself lands in
     # the shell via the macos platform layer on the next login.
-    local prefix
-    case "$(uname -m)" in
-        arm64) prefix="/opt/homebrew" ;;
-        *)     prefix="/usr/local" ;;
-    esac
-    case ":$PATH:" in
-        *":$prefix/bin:"*) ;;
-        *) export PATH="$prefix/bin:$PATH" ;;
-    esac
+    macos_path_add /opt/homebrew/bin
     if ! command_exists brew; then
-        error "Homebrew installed but brew is still not on PATH ($prefix/bin)."
+        error "Homebrew installed but brew is still not on PATH (/opt/homebrew/bin)."
     fi
     info "Homebrew installed at $(command -v brew)"
 }
 
-macos_default_shell() {
-    # Hand the login shell over to Homebrew's bash; idempotent and non-fatal
-    local brew_bin brew_prefix bash_path arch
-    brew_bin="$(command -v brew || true)"
-    arch="$(uname -m)"
-    if [[ -n "$brew_bin" ]]; then
-        brew_prefix="$(dirname "$(dirname "$brew_bin")")"   # /usr/local/bin/brew -> /usr/local
-    elif [[ "$arch" == "arm64" ]]; then
-        brew_prefix="/opt/homebrew"
-    else
-        brew_prefix="/usr/local"
+macos_ensure_clt() {
+    # MacPorts needs the Xcode Command Line Tools (compilers, SDK). Install
+    # them headless via softwareupdate (the trick the Homebrew installer
+    # uses); fall back to the GUI prompt and stop when that is not possible.
+    if xcode-select -p >/dev/null 2>&1; then
+        return 0
     fi
-    bash_path="$brew_prefix/bin/bash"
+    info "Xcode Command Line Tools not found — installing via softwareupdate..."
+    local marker="/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress" label
+    touch "$marker"
+    label="$(softwareupdate -l 2>/dev/null |
+        sed -n 's/^[[:space:]]*\* Label: \(Command Line Tools.*\)$/\1/p' |
+        sort -V | tail -1 || true)"
+    if [[ -n "$label" ]]; then
+        quiet run_priv softwareupdate -i "$label" || true
+    fi
+    rm -f "$marker"
+    if ! xcode-select -p >/dev/null 2>&1; then
+        xcode-select --install >/dev/null 2>&1 || true
+        error "Xcode Command Line Tools are required for MacPorts. Finish the installer dialog, then re-run."
+    fi
+}
+
+install_macports() {
+    # A pristine Intel Mac gets MacPorts: the latest release's signed .pkg
+    # for this macOS major version, from the macports-base GitHub releases.
+    local port_bin major tmp url signer
+    if port_bin="$(macos_port_bin)"; then
+        macos_path_add "$MACPORTS_PREFIX/sbin"
+        macos_path_add "$(dirname "$port_bin")"
+        return 0
+    fi
+    macos_ensure_clt
+
+    major="$(sw_vers -productVersion | cut -d. -f1)"
+    info "MacPorts not found — installing the latest release for macOS $major..."
+    tmp="$(mktemp -d)"
+    if ! download https://api.github.com/repos/macports/macports-base/releases/latest "$tmp/release.json"; then
+        rm -rf "$tmp"
+        error "Could not query the MacPorts releases — install it from https://www.macports.org/install.php and re-run."
+    fi
+    # Asset names look like MacPorts-2.12.7-15-Sequoia.pkg (".pkg.asc" excluded)
+    url="$(grep -oE '"browser_download_url": *"[^"]*/MacPorts-[0-9.]+-'"$major"'-[A-Za-z]+\.pkg"' "$tmp/release.json" |
+        head -1 | sed -E 's/.*"(https[^"]*)"$/\1/' || true)"
+    if [[ -z "$url" ]]; then
+        rm -rf "$tmp"
+        error "No MacPorts installer for macOS $major in the latest release — install it from https://www.macports.org/install.php and re-run."
+    fi
+    info "Downloading $(basename "$url")..."
+    if ! download "$url" "$tmp/MacPorts.pkg"; then
+        rm -rf "$tmp"
+        error "MacPorts download failed ($url)."
+    fi
+    # Refuse anything not signed with an Apple-issued Developer ID certificate
+    if ! pkgutil --check-signature "$tmp/MacPorts.pkg" >"$tmp/signature" 2>&1 ||
+       ! grep -q 'signed by a developer certificate issued by Apple' "$tmp/signature"; then
+        cat "$tmp/signature" >>"$AUDIT_LOG"
+        rm -rf "$tmp"
+        error "The MacPorts installer failed its signature check — not installing it."
+    fi
+    signer="$(grep -m1 -oE 'Developer ID Installer: [^(]*' "$tmp/signature" || true)"
+    info "Installer signature OK${signer:+ ($signer)}"
+    if ! quiet run_priv installer -pkg "$tmp/MacPorts.pkg" -target /; then
+        rm -rf "$tmp"
+        error "MacPorts installation failed — install it from https://www.macports.org/install.php and re-run."
+    fi
+    rm -rf "$tmp"
+    # PATH for the rest of this run; interactive shells get it from the
+    # macos platform layer.
+    macos_path_add "$MACPORTS_PREFIX/sbin"
+    macos_path_add "$MACPORTS_PREFIX/bin"
+    if ! command_exists port; then
+        error "MacPorts installed but port is still not on PATH ($MACPORTS_PREFIX/bin)."
+    fi
+    info "MacPorts installed at $(command -v port)"
+}
+
+macos_default_shell() {
+    # Hand the login shell over to the package manager's bash; idempotent and non-fatal
+    local brew_bin bash_path
+    case "$PKG_MGR" in
+        port)
+            bash_path="$MACPORTS_PREFIX/bin/bash"
+            ;;
+        *)
+            if brew_bin="$(macos_brew_bin)"; then
+                bash_path="$(dirname "$brew_bin")/bash"    # /opt/homebrew/bin/brew -> /opt/homebrew/bin/bash
+            else
+                bash_path="/opt/homebrew/bin/bash"
+            fi
+            ;;
+    esac
     if [[ ! -x "$bash_path" ]]; then
-        warn "Homebrew bash not found at $bash_path — keeping the current login shell"
+        warn "$PKG_MGR bash not found at $bash_path — keeping the current login shell"
         return 0
     fi
 
@@ -796,10 +991,10 @@ post_install_checks() {
 
 install_tmux_mem_cpu_load() {
     # Memory/CPU/load bar binary for the tmux-powerline segment. Packaged for
-    # Homebrew but not for Debian, so Linux apt distros build it from the
-    # pinned upstream release. Non-fatal throughout: the segment silently
-    # drops out of the bar when the binary is missing (upstream probes it
-    # before running), the rest of the statusline is unaffected.
+    # Homebrew and MacPorts but not for Debian or Alpine, so Linux distros
+    # build it from the pinned upstream release. Non-fatal throughout: the
+    # segment silently drops out of the bar when the binary is missing
+    # (upstream probes it before running); the rest of the bar is unaffected.
     if command_exists tmux-mem-cpu-load; then
         info "tmux-mem-cpu-load already installed"
         return 0
@@ -807,9 +1002,9 @@ install_tmux_mem_cpu_load() {
 
     local version="v3.8.3" tmp
 
-    if [[ "$PKG_MGR" == "brew" ]]; then
-        # Homebrew builds and installs into the prefix. Kept out of the core
-        # batch so this function is the single documented seam for the binary.
+    if [[ "$PKG_MGR" == "brew" || "$PKG_MGR" == "port" ]]; then
+        # Homebrew and MacPorts both package it. Kept out of the core batch
+        # so this function is the single documented seam for the binary.
         pkg_install tmux-mem-cpu-load || FAILURES+=("install: tmux-mem-cpu-load")
         return 0
     fi
@@ -821,14 +1016,29 @@ install_tmux_mem_cpu_load() {
         return 0
     fi
 
-    info "Building tmux-mem-cpu-load $version from source (not packaged on apt)..."
-    if ! pkg_install_set build-essential cmake; then
-        if ! pkg_install_set build-base cmake; then
-          warn "Cannot build tmux-mem-cpu-load without a C++ toolchain and cmake"
-        fi
+    # Neither Debian nor Alpine packages it: build from the pinned release.
+    # The C++ toolchain is spelled per package manager, so only the native
+    # meta-package is requested (asking apk for build-essential used to fail
+    # and leave a spurious FAILURES entry before the build-base retry).
+    local toolchain=()
+    case "$PKG_MGR" in
+        apt-get) toolchain=(build-essential cmake) ;;
+        apk)     toolchain=(build-base cmake) ;;
+        dnf)     toolchain=(gcc-c++ make cmake) ;;
+        pacman)  toolchain=(base-devel cmake) ;;
+        *)
+            warn "No known C++ toolchain package for $PKG_MGR — the tmux mem/cpu segment is skipped"
+            FAILURES+=("install: tmux-mem-cpu-load (toolchain)")
+            return 0
+            ;;
+    esac
+
+    info "Building tmux-mem-cpu-load $version from source (not packaged for $PKG_MGR)..."
+    if ! pkg_install "${toolchain[@]}"; then
+        warn "Cannot build tmux-mem-cpu-load without a C++ toolchain and cmake (${toolchain[*]})"
         FAILURES+=("install: tmux-mem-cpu-load (toolchain)")
         return 0
-    fi 
+    fi
     tmp="$(mktemp -d)"
     if ! download "https://github.com/thewtex/tmux-mem-cpu-load/archive/refs/tags/${version}.tar.gz" "$tmp/src.tar.gz"; then
         rm -rf "$tmp"
@@ -860,13 +1070,14 @@ install_core() {
 
     case "$PLATFORM" in
         macos)
-            # Privacy: keep Homebrew from calling home, both for the bootstrap
-            # run itself and for every install it performs. The same exports
-            # live in the macos platform layer for interactive shells.
-            export HOMEBREW_NO_ANALYTICS=1
-            export HOMEBREW_NO_ENV_HINTS=1
-            install_homebrew
-            info "Installing core packages via Homebrew..."
+            # detect_pkg_mgr already picked (and if needed bootstrapped)
+            # Homebrew or MacPorts — see macos_select_pkg_mgr. Package names
+            # are identical on both.
+            if [[ "$PKG_MGR" == "port" ]]; then
+                info "Installing core packages via MacPorts..."
+            else
+                info "Installing core packages via Homebrew..."
+            fi
             pkg_install_set bash age stow just tmux shellcheck git coreutils \
                 direnv jq bc
             macos_default_shell

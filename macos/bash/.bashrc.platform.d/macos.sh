@@ -11,12 +11,42 @@ if [[ "${LC_CTYPE-}" == "UTF-8" ]] && ! locale -a 2> /dev/null | grep -qx 'UTF-8
   unset LC_CTYPE
 fi
 
-# Homebrew (Apple Silicon: /opt/homebrew, Intel: /usr/local)
+# Package managers: Homebrew (Apple Silicon: /opt/homebrew; legacy Intel
+# installs: /usr/local) and MacPorts (/opt/local, the Intel default since
+# Homebrew dropped Intel). Whichever is installed goes on PATH; with both, the
+# one setup.sh would pick (scripts/setup.sh macos_select_pkg_mgr) goes first:
+# Homebrew on Apple Silicon, MacPorts on Intel, or DOTS_MACOS_PKG_MGR if set.
+_dots_brew=""
 if [[ -x /opt/homebrew/bin/brew ]]; then
-  eval "$(/opt/homebrew/bin/brew shellenv)"
+  _dots_brew=/opt/homebrew/bin/brew
 elif [[ -x /usr/local/bin/brew ]]; then
-  eval "$(/usr/local/bin/brew shellenv)"
+  _dots_brew=/usr/local/bin/brew
 fi
+[[ -n "$_dots_brew" ]] && eval "$("$_dots_brew" shellenv)"
+
+if [[ -x /opt/local/bin/port ]]; then
+  _dots_port_first=true
+  if [[ -n "$_dots_brew" ]]; then
+    case "${DOTS_MACOS_PKG_MGR-}" in
+      port) ;;
+      brew) _dots_port_first=false ;;
+      *) [[ "$(sysctl -n hw.optional.arm64 2> /dev/null)" == "1" ]] && _dots_port_first=false ;;
+    esac
+  fi
+  # Re-adding moves an existing entry rather than duplicating it
+  _dots_path=":$PATH:"
+  _dots_path="${_dots_path//:\/opt\/local\/bin:/:}"
+  _dots_path="${_dots_path//:\/opt\/local\/sbin:/:}"
+  _dots_path="${_dots_path#:}"
+  _dots_path="${_dots_path%:}"
+  if [[ "$_dots_port_first" == "true" ]]; then
+    export PATH="/opt/local/bin:/opt/local/sbin${_dots_path:+:$_dots_path}"
+  else
+    export PATH="${_dots_path:+$_dots_path:}/opt/local/bin:/opt/local/sbin"
+  fi
+  unset _dots_path _dots_port_first
+fi
+unset _dots_brew
 
 # Homebrew privacy: no analytics, no install/update hints; mirrors the env
 # setup.sh exports for its own bootstrap run (scripts/setup.sh).
@@ -49,4 +79,4 @@ case ":${MANPATH-}:" in
   *) export MANPATH="$HOME/.local/share/man:${MANPATH:+:$MANPATH}" ;;
 esac
 
-# Homebrew's bash 5 and the /etc/shells entry are handled by setup.sh.
+# The package manager's bash 5 and its /etc/shells entry are handled by setup.sh.

@@ -73,7 +73,7 @@ lint:
   set -euo pipefail
   if ! command -v shellcheck >/dev/null 2>&1; then
     echo "lint: shellcheck is not installed — skipping."
-    echo "  (install with: brew install shellcheck | apt install shellcheck | apk add shellcheck)"
+    echo "  (install with: brew install shellcheck | port install shellcheck | apt install shellcheck | apk add shellcheck)"
     exit 0
   fi
   files=()

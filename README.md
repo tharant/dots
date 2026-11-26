@@ -28,7 +28,7 @@ apk add bash git curl && curl -fsSL https://raw.githubusercontent.com/tharant/do
 
 | Platform | Stow layers applied | Notes |
 |---|---|---|
-| macOS Sequoia+ | `common/` + `macos/` | brew bash 5 registered in `/etc/shells` by setup.sh |
+| macOS Sequoia+ | `common/` + `macos/` | Homebrew on Apple Silicon, MacPorts on Intel (auto-detected; `DOTS_MACOS_PKG_MGR` overrides); its bash 5 registered in `/etc/shells` by setup.sh |
 | Debian bookworm/trixie | `common/` + `linux/` | `just` on bookworm comes from a GitHub release binary; node 22 from upstream tarball if apt's is older |
 | Alpine 3.22+ | `common/` + `linux/` + `alpine/` | setup.sh ensures the `community` repo, `bash`, `shadow`, `ncurses-terminfo` |
 | WSL2 (Debian/Alpine) | as above + `wsl/` | Windows PATH trimmed, `clip.exe`-aware clipboard |
@@ -104,7 +104,7 @@ agreement with the code they document:
 | [tmux-copy(1)](docs/tmux-copy.md) | `~/bin/tmux-copy` — clipboard ladder + OSC 52 (`common/bin`) |
 | [trash(1)](docs/trash.md) | `~/bin/trash` — `rm`-compatible moves to the platform trash or `~/.trash` (`common/bin`) |
 | [runtimes(1)](docs/runtimes.md) | `~/bin/runtimes` — managed runtimes CLI: uv/fnm/sdkman (`common/bin`) |
-| [packages(1)](docs/packages.md) | `~/bin/packages` — package wishlist CLI: resolve + install `~/.packages` across apt/apk/dnf/pacman/pkg/brew (`common/bin`) |
+| [packages(1)](docs/packages.md) | `~/bin/packages` — package wishlist CLI: resolve + install `~/.packages` across apt/apk/dnf/pacman/pkg/brew/port (`common/bin`) |
 | [dots(1)](docs/dots.md) | `~/bin/dots` — repo orchestration CLI: delegates every op, plus composed `sync` and gated interactive `commit` (never pushes) (`common/bin`) |
 
 Install them as real manpages (see [docs/man/Makefile](docs/man/Makefile)):

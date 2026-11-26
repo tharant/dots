@@ -1,8 +1,11 @@
 # MYDOTS — Vim setup guide
 
 Everything about this setup lives in `~/.vimrc` (the only main config — vim
-reads that file, not `~/.vim/init.vim`) and `~/.vim/` (plugins). This document
-explains what's active, how it works, and how to use it.
+reads that file, not `~/.vim/init.vim`) and `~/.vim/` (plugins). Neovim runs
+a config kept in lockstep with this one: `~/.config/nvim/init.lua` — same
+options, same keys, the same `:DotTheme` writing the same `~/.vim/.theme`,
+plus a native statusline mirroring airline. This document explains what's
+active, how it works, and how to use it.
 
 ## Requirements
 
@@ -13,13 +16,21 @@ explains what's active, how it works, and how to use it.
   all) so startup stays clean; installing node and restarting vim re-enables
   it. node comes from fnm via the `runtimes` CLI (see
   [docs/direnv-runtimes.md](../../docs/direnv-runtimes.md) in the repo).
+- **Scala tooling** (`metals`) is optional: `.bashrc` gives coursier's bin dir
+  a PATH entry when `~/.local/share/coursier/bin` exists, and the Scala
+  client in `.vimrc` only wires up when the `metals` binary is found (see
+  [Scala (Metals) via coc](#scala-metals-via-coc)). On Neovim the full
+  nvim-metals setup needs nvim >= 0.11 (this box runs an upstream tarball; the
+  stock Debian `nvim` is 0.10 and quietly skips it).
 - A clipboard helper (`pbcopy`, `wl-copy`, `xclip`, `win32yank.exe` or
   `clip.exe`) for `\y` and for the `clipboard=unnamedplus` shortcut. Without
   one vim just keeps its internal clipboard — no errors, no maps bound.
 
 ## Keybindings — what's been changed from shipped defaults
 
-Leader is the default `\`.
+Leader is the default `\` — in BOTH editors (nvim's leader was unified onto
+the same backslash so every map below binds identically in `~/.vimrc` and
+`~/.config/nvim/init.lua`).
 
 ### Editing / text
 
@@ -29,7 +40,10 @@ Leader is the default `\`.
 | `Q` | Reflow text (`gq`) | Freed from Ex mode, which is basically useless |
 | `p` (visual mode) | Replace selection with last-pasted text without clobbering the paste register | Lets you paste over multiple things in a row |
 | `w!!` (command mode) | Save file with sudo | "forgot to open vim with sudo" rescue |
-| `\y` | Copy last-yanked text to the system clipboard | Uses whichever helper is found (`pbcopy`, `wl-copy`, `xclip`, `win32yank.exe`, `clip.exe`); only bound if one exists |
+| `<Esc>` | Clear search highlight | also in nvim; sensible's `<C-L>` keeps working |
+| `<C-h>`/`<C-j>`/`<C-k>`/`<C-l>` | Move between splits | same keys in both editors (`<C-l>` still plain-left in insert) |
+| `[b` / `]b` | Previous / next buffer | same keys in both editors |
+| `\y` | Copy last-yanked text to the system clipboard | Uses whichever helper is found (`pbcopy`, `wl-copy`, `xclip`, `win32yank.exe`, `clip.exe`); only bound if one exists. nvim doesn't ship this map — its `clipboard=unnamedplus` already sends every yank to the system clipboard |
 
 ### coc.nvim (code intelligence)
 
@@ -46,6 +60,10 @@ you don't get with the plugin alone:
 | `gr` | Find references |
 | `K` | Show docs in preview window (falls back to built-in keyword lookup when no LSP covers the buffer) |
 | `\rn` | Rename symbol under cursor |
+| `\ac` | Show code actions at the cursor (fixes, refactors) | |
+| `\qf` | Apply the quickfix offered by the diagnostic at the cursor | |
+| `\f` (visual) | Format the selection via the language server | |
+| `[g` / `]g` | Jump to previous / next diagnostic | |
 | (hover) | Holding the cursor on a symbol highlights where it's used (`CursorHold` autocmd) |
 
 ### Theme switching
@@ -64,6 +82,14 @@ confirmation. An unknown name (e.g. `:DotTheme bogus`) prints the available
 options and leaves the theme untouched. Startup re-applies the saved theme
 silently — no message, no keypress needed.
 
+**Neovim ships the same system**: `:DotTheme` with the same names,
+`\tg`/`\tc`, and the same two-step default — with colorscheme files vendored
+at `~/.config/nvim/colors/{gruvbox,codedark}.vim` (copies of the vim
+plugins' `colors/`; refresh them after a `:PlugUpdate`). Both editors write
+the same `~/.vim/.theme`, so the tmux bar and the trueline prompt follow
+theme switches from **either** editor; if `~/.vim` doesn't exist (an
+nvim-only machine), nvim persists to `~/.local/state/nvim/.theme` instead.
+
 ## Theme switching — how it works
 
 Two colorschemes are installed:
@@ -75,7 +101,7 @@ Two colorschemes are installed:
 
 - The chosen theme is written to `~/.vim/.theme` (plain text, one line) and
   re-applied at startup. If that file is missing or has an unrecognized value,
-  it defaults to `gruvbox`. (The file is generated on first use — the repo
+  it defaults to `codedark`. (The file is generated on first use — the repo
   doesn't ship one.)
 - The block in `~/.vimrc` right after the true-color setup defines `s:themes`
   (theme → colorscheme/airline names), `s:LoadTheme()` (reads the restored name),
@@ -117,7 +143,6 @@ Two colorschemes are installed:
 | `vim-fugitive` | Git integration inside vim | `:Git status`, `:Git blame`, `:Gdiffsplit`, … |
 | `vim-gitgutter` | Added/changed/removed markers in the gutter | automatic; `:GitGutterToggle` to disable |
 | `vim-scala` | Scala syntax highlighting / indent | automatic for `.scala` files |
-| `vim-sensible` | Sane defaults | automatic |
 
 ## coc.nvim notes
 
@@ -130,30 +155,97 @@ Two colorschemes are installed:
   upstream and use this same setup there.
 - Management: `:CocInfo`, `:CocList extensions`, `:CocCommand <name>`.
 
+### Scala (Metals) via coc
+
+`.scala` / `.sbt` buffers are served by a **generic coc language-server
+client** that drives the Metals binary installed by Coursier. Why not the
+usual `coc-metals` extension? It is deprecated and unmaintained — no coc
+extension covers Metals anymore, and upstream only recommends nvim-metals
+(Neovim) or plain LSP clients for Vim. So the split is:
+
+- **Neovim — primary, full experience.** `~/.config/nvim` bootstraps
+  `nvim-metals` (shallow clone into a `site/pack/dots/start` pack on first
+  run — no plugin manager). Buffer-local mappings (`gd`, `gr`, `K`,
+  `\rn`, `\ac`, `\fm`, `]d`/`[d`, …) plus Metals commands
+  (`\mi` import build, `\mo` organize imports, `\mp` doctor; every command
+  in `:h metals-commands`). Worksheets get inlay hints.
+- **Vim — fallback, core LSP.** `.vimrc` injects `languageserver.scala`
+  into `g:coc_user_config`, pointed at `exepath('metals')` and guarded on
+  the binary's existence. Completion, `K`, `gd`/`gr`/`gy`/`gi`, `\rn`,
+  `\ac`, `[g`/`]g` and `:CocList diagnostics` all work there; the build
+  import prompt arrives as a normal coc dialog. Metals-specific commands
+  are not registered as `:CocCommand` names, but they can still be run —
+  e.g. `:CocCommand workspace.executeCommand metals.import-build`.
+- **Install (both editors share one Metals binary):** coursier lives in
+  `~/.local/share/coursier/bin` (PATH block in `.bashrc`), then
+  `cs install metals scala-cli`.
+
+Caveat: `g:coc_user_config` takes precedence over `coc-settings.json`; if
+you ever move settings to a file, mirror or relocate this block.
+
 ## Other `~/.vimrc` settings worth knowing
 
 - **Tabs**: `expandtab`, 2-space tabs (filetypes may override).
 - **Numbers**: hybrid — absolute current line, relative everywhere else.
 - **Search**: incremental + highlighted (`hlsearch`).
+- **Tabs**: `expandtab`, 2-space tabs (filetypes may override) — nvim uses
+  the same 2-space base (its scala/sbt override became redundant and was
+  removed).
+- **Numbers**: hybrid — absolute current line, relative everywhere else.
+- **Search**: incremental + highlighted (`hlsearch`), case-insensitive until
+  CamelCase (`ignorecase smartcase`), `<Esc>` clears the highlight.
+- **Scroll/UI**: `scrolloff=8`, `cursorline`, `colorcolumn=100`,
+  `signcolumn=yes` (a reserved gutter column that never shifts layout),
+  splits always open below/right, mouse enabled everywhere.
+- **Updatetime**: 250 ms — CursorHold features (the coc reference highlight)
+  react quickly in vim, matching nvim's long-standing setting.
+- **File handling**: no swap files, no `file~` backups; undo persists across
+  restarts (`undofile`) in `~/.vim/undo/` (vim) / the nvim data dir.
 - **Backspace**: works over indent, EOL, insert-start like everywhere else.
 - **Colors**: true color (`termguicolors`) when `$COLORTERM` says so (or you're
   on kitty/alacritty), 256 colors otherwise; airline follows either way.
 - **Clipboard**: `clipboard=unnamedplus` when a clipboard helper is found (so
   yanks go straight to the system clipboard); `\y` re-sends the last yank (see
-  keybinding table).
+  keybinding table). Note: the vim binary on this box is compiled
+  **-clipboard** — `set clipboard=…` errors there (E519), which is why the
+  set-guard exists: it applies only on +clipboard builds, and `\y` is the
+  working path on this box. nvim's guard is functional (it has a clipboard
+  provider), including the graphical-session fallback vim can't use.
+- **Statusline**: vim uses vim-airline with powerline glyphs; nvim uses a
+  native, plugin-free statusline that mirrors airline's contract (mode chip,
+  branch + hunks, LSP status, filetype, E/W counts, powerline position glyphs)
+  driven by `g:dot_powerline_fonts`.
 
 ## Files in `~/.vim` and `~`
 
 ```
 ~/.vimrc            main config (the ONLY vim config; edit this one)
 ~/.vim/.theme       persisted theme choice, one line: gruvbox | codedark
-                    (generated by the theme switcher, not tracked)
+                    (generated by the theme switcher, not tracked; read AND
+                    written by the nvim twin too, plus tmux/trueline)
+~/.vim/undo/        persistent undo directory (generated by the undofile
+                    switch, not tracked)
 ~/.vim/autoload/plug.vim      plugin manager (vendored vim-plug)
 ~/.vim/plugged/     installed plugins (generated on first launch)
 ~/.vim/colors/xoria256.vim   old default colorscheme, kept as a fallback
 ~/.vim/.netrwhist   vim's netrw history (auto-generated, regenerates itself)
 ~/.vim/MYDOTS.md    this file
+~/.config/nvim/init.lua       nvim main config (kept in lockstep with ~/.vimrc)
+~/.config/nvim/colors/*.vim   vendored gruvbox/codedark copies for nvim (sync
+                              recipe in the init.lua theme-block header)
+~/.local/state/nvim/.theme    nvim-only theme fallback (only when ~/.vim is absent)
 ```
+
+## Cleaned up on 2026-11-23
+
+- **vim-sensible removed** — its defaults are now explicit in the "Unified
+  with nvim" block at the top of `~/.vimrc`. Reason: sensible only defers to
+  options it believes were "set from a file in $HOME" (it greps the last-set
+  location for a literal `~/`), and stow's symlinked configs record absolute
+  repo paths — so sensible silently overrode vimrc's own settings (it reset
+  `scrolloff` to 1 and `history` to 1000 after vimrc set 8/10000). All of its
+  useful defaults (wildmenu, autoread, laststatus, smarttab, `nrformats-=o`,
+  `formatoptions+=j`, session/viminfo tweaks) are now written explicitly.
 
 ## Cleaned up on 2026-08-28
 
@@ -179,6 +271,6 @@ useful:
   vendored clones went away in favor of the manager: `plug.vim` is now the
   single vendored file in `~/.vim/autoload/`, and plugins install into
   `~/.vim/plugged/` on first launch. `~/.vim/.theme` is untracked too — the
-  theme switcher writes it whenever you run `\tg` / `\tc`, and you get gruvbox
+  theme switcher writes it whenever you run `\tg` / `\tc`, and you get codedark
   until then. coc.nvim's node requirement (>= 22.15) is why the requirement
   note above exists.

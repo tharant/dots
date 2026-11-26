@@ -49,11 +49,13 @@ installed, so the package install, locale generation and `/etc/shells`
 steps never run in those modes. `--restow`, `--adopt` and `--unstow` do no
 `require_priv` check of their own: they proceed after the warning, and the
 first step that needs root (installing `stow` when it is missing) fails,
-reported by the ERR trap. Homebrew is never run with the privilege prefix.
+reported by the ERR trap. Homebrew is never run with the privilege prefix;
+MacPorts (`port`, `installer`) always is.
 
 **Output policy.** The terminal carries only the `==>` status lines.
-Package-manager (`apt-get`, `brew`, `dnf`, `pacman`, `apk`, `pkg` — including
-the one-time `apt-get update`), installer (Homebrew, uv, sdkman),
+Package-manager (`apt-get`, `brew`, `port`, `dnf`, `pacman`, `apk`, `pkg` —
+including the one-time `apt-get update` / `port selfupdate`), installer
+(Homebrew, MacPorts, uv, sdkman),
 locale-generation and git (clone/pull) output is captured in a per-run audit
 log at `~/.local/state/dots/setup-<timestamp>.log`, whose path is announced
 at the start of every run. A captured step that fails prints the last 20
@@ -68,22 +70,47 @@ Linux the distro ID comes from `/etc/os-release`. WSL is detected from
 `WSL_DISTRO_NAME` or the kernel string in `/proc/version`; an OrbStack kernel
 string on macOS is reported informationally only.
 
-**Package managers.** Detection order: `brew`, `apt-get`, `dnf`, `pacman`,
-`apk`, `pkg`. None found is fatal. `apt-get update` runs once, before the
+**Package managers.** On macOS the choice is between Homebrew (`brew`) and
+MacPorts (`port`) — see the macos entry below. Elsewhere the detection order
+is `brew`, `apt-get`, `dnf`, `pacman`, `apk`, `pkg`, and none found is fatal.
+`apt-get update` (and on MacPorts `port selfupdate`) runs once, before the
 first install. Batch installs are retried package by package when the batch
 fails, so one missing or renamed package does not sink the whole set;
 individual failures are recorded as non-fatal.
 
 Per-platform behaviour:
 
-- **macos** — exports `HOMEBREW_NO_ANALYTICS=1` and `HOMEBREW_NO_ENV_HINTS=1`
+- **macos** — picks the package manager. Homebrew no longer supports Intel
+  Macs, so the rule is:
+  - only one of `brew` / `port` installed → use it (an existing Homebrew on
+    an Intel Mac is kept, with a warning suggesting MacPorts);
+  - both installed → Homebrew on Apple Silicon, MacPorts on Intel;
+  - neither → bootstrap Homebrew on Apple Silicon, MacPorts on Intel;
+  - `DOTS_MACOS_PKG_MGR=brew|port` forces the choice — except that Homebrew
+    is never *installed* on an Intel Mac (fatal).
+
+  Apple Silicon is detected from `sysctl hw.optional.arm64` (hardware, so a
+  Rosetta shell still counts as Apple Silicon). Installed managers are found
+  on `PATH` or at their standard prefixes (`/opt/homebrew`, `/usr/local`,
+  `/opt/local`) and put on `PATH` for the run.
+
+  **Homebrew**: exports `HOMEBREW_NO_ANALYTICS=1` and `HOMEBREW_NO_ENV_HINTS=1`
   (Homebrew must not call home; the macos platform layer sets the same vars
-  for interactive shells), installs Homebrew itself when `brew` is missing (official
-  installer, `NONINTERACTIVE=1`, run as the invoking user); installs `bash age
-  stow just tmux shellcheck git coreutils direnv`, adds Homebrew's bash to
+  for interactive shells), installs Homebrew itself when missing (official
+  installer, `NONINTERACTIVE=1`, run as the invoking user; fatal as root).
+  **MacPorts**: ensures the Xcode Command Line Tools (headless
+  `softwareupdate -i`, falling back to the `xcode-select --install` dialog
+  and a fatal "re-run" message), downloads the latest
+  `MacPorts-<version>-<macOS major>-<name>.pkg` from the
+  `macports/macports-base` GitHub releases, refuses it unless `pkgutil
+  --check-signature` reports an Apple-issued Developer ID signature, and
+  installs it with `installer -pkg … -target /` (all fatal on failure).
+
+  Then, with either manager, installs `bash age stow just tmux shellcheck git
+  coreutils direnv jq bc`, adds that manager's bash (`/opt/homebrew/bin/bash`,
+  or next to an existing `brew`; `/opt/local/bin/bash` for MacPorts) to
   `/etc/shells`, and makes it the login shell with `chsh` (both non-fatal if
-  they fail). The prefix is derived from the `brew` binary path, falling back
-  to `/opt/homebrew` (arm64) or `/usr/local`.
+  they fail).
 - **Alpine** — ensures the `community` repository is enabled in
   `/etc/apk/repositories` (derived from the `main` line and appended; if the
   file or the mirror line is missing, the failure is recorded and the step is
@@ -109,10 +136,13 @@ Per-platform behaviour:
   ca_root_nss` via `pkg`.
 
 Post-install: `tmux-mem-cpu-load` is installed for the tmux-powerline
-mem/cpu segment — the Homebrew formula on macOS, built from source at the
-pinned upstream release (`v3.8.3`) on apt distros (installing the C++
-toolchain and cmake for the build; `make install` into `/usr/local/bin`),
-and skipped with a recorded non-fatal failure elsewhere — on failure the
+mem/cpu segment — the Homebrew formula or MacPorts port on macOS, built
+from source at the pinned upstream release (`v3.8.3`) on Linux, where
+neither Debian nor Alpine packages it. The build installs the native C++
+toolchain plus cmake — `build-essential` on apt, `build-base` on apk,
+`gcc-c++ make` on dnf, `base-devel` on pacman — and installs the binary into
+`/usr/local/bin`. Any other package manager or platform skips it with a
+recorded non-fatal failure — on failure the
 segment simply drops out of the status bar. Then `git curl just tmux
 shellcheck` are each verified (a missing
 tool is a recorded non-fatal failure), a missing `stow` is **fatal**, a
@@ -208,7 +238,8 @@ adoption is a single stow run.
 | `DOTS_DIR` | Where the repo lives / is cloned. Read on every run to locate the clone — not only for the initial one — so it can also re-point the other modes at a checkout elsewhere. | `$HOME/.dots` |
 | `FORCE` | Passed through to `dots-decrypt`; `--force` sets it to `true`. | `false` |
 | `WSL_DISTRO_NAME` | Read during detection; non-empty marks the environment as WSL and enables the `wsl` stow layer. | — |
-| `SHELL` | Read on macOS to decide whether `chsh` is needed for Homebrew's bash. | — |
+| `DOTS_MACOS_PKG_MGR` | macOS only: `brew` or `port` forces the package manager (any other value is fatal). Homebrew is still never installed on an Intel Mac. | unset (auto-detect) |
+| `SHELL` | Read on macOS to decide whether `chsh` is needed for the package manager's bash. | — |
 
 ## Exit status
 
@@ -217,7 +248,9 @@ adoption is a single stow run.
 - **1** — a fatal error occurred, *or* one or more non-fatal steps failed.
   The fatal paths are: unsupported platform, no supported package manager,
   the Homebrew installer failing or setup.sh running as root (Homebrew
-  refuses root), Alpine run without bash, no privileges when
+  refuses root), Homebrew requested on an Intel Mac without one installed,
+  an invalid `DOTS_MACOS_PKG_MGR`, missing Xcode Command Line Tools or a
+  failed MacPorts download / signature check / install, Alpine run without bash, no privileges when
   required, failed clone, GNU Stow still missing after install (or
   impossible to install in the `--restow`/`--adopt`/`--unstow` modes),
   unknown option, `verify.sh` missing — and, because the decrypt and verify
@@ -244,7 +277,8 @@ options.` and exits 1. A run can print plenty of WARNING lines and still exit
 - `/proc/version` — WSL detection.
 - `/etc/apk/repositories` — read, and extended with the community repo, on Alpine.
 - `/etc/locale.gen` — enabled for `en_US.UTF-8` on Debian.
-- `/etc/shells` — appended with Homebrew's bash on macOS.
+- `/etc/shells` — appended with the Homebrew or MacPorts bash on macOS.
+- `/opt/local` — MacPorts prefix (installed on Intel Macs).
 - `~/.local/bin/age`, `~/.local/bin/age-keygen` — static age fallback (0755).
 - `~/.local/bin/direnv` — static direnv fallback (0755).
 - `~/.local/bin/uv`, `~/.local/bin/fnm` — runtime-manager installs (macOS/Linux/WSL).
