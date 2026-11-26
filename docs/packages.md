@@ -23,7 +23,7 @@ tools the bootstrap guarantees — and never touches it again. From then on
 the file is owned by the user: it records both the baseline and every
 package deliberately added since, and `packages update` resolves each
 entry against whatever package managers are actually installed on the
-machine (apt, apk, dnf, pacman, pkg, brew, port) and installs what is missing.
+machine (apt, apk, dnf, zypper, pacman, pkg, brew, port) and installs what is missing.
 
 The point is a single plain-text source of truth per machine: a fresh
 machine converges from a list of names with no per-platform bookkeeping,
@@ -63,7 +63,7 @@ build-essential @apt:build-essential @apk:build-base @dnf:gcc-c++,make @brew:-
 debian-desktop @apt:task-gnome-desktop @apk:- @dnf:- @pacman:- @brew:-
 ```
 
-Resolution order is `apt apk dnf pacman pkg brew` (Linuxbrew is consulted
+Resolution order is `apt apk dnf zypper pacman pkg brew` (Linuxbrew is consulted
 after the system package manager). On macOS only Homebrew and MacPorts are
 consulted, whichever are installed, native choice first — `port brew` on
 Intel Macs (Homebrew no longer supports Intel), `brew port` on Apple Silicon

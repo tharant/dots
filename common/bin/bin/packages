@@ -5,7 +5,7 @@ set -euo pipefail
 # file itself is seeded from templates/packages/.packages by dots-setup).
 # Reads a per-machine wishlist (one entry per line, '#' comments allowed),
 # resolves each entry against whatever backends are actually installed — apt,
-# apk, dnf, pacman, pkg (BSD), brew / port (MacPorts) on macOS — and
+# apk, dnf, zypper, pacman, pkg (BSD), brew / port (MacPorts) on macOS — and
 # installs what is missing. Bare names are tried by exact match in backend
 # priority order; @mgr:alt,alt2 pins override the name on that backend and
 # @mgr:- excludes it entirely. An entry matching nowhere is resolved once
@@ -95,7 +95,7 @@ Entry syntax (in ~/.packages and in `add`):
   name @brew:-        never resolve this entry on brew
   # ...               comments and blank lines are ignored
 
-Backends, in resolution order: apt, apk, dnf, pacman, pkg, brew. On macOS
+Backends, in resolution order: apt, apk, dnf, zypper, pacman, pkg, brew. On macOS
 only brew and port (MacPorts) are consulted: port first on Intel, brew first
 on Apple Silicon (DOTS_MACOS_PKG_MGR=brew|port overrides). The first backend with the exact name (or a pin) wins; the choice
 is recorded in ~/.local/state/packages/resolutions and reused. Packages this
@@ -271,7 +271,7 @@ detect_backends() {
             done
             ;;
         *)
-            for b in apt-get apk dnf pacman pkg brew; do
+            for b in apt-get apk dnf zypper pacman pkg brew; do
                 command -v "$b" >/dev/null 2>&1 || continue
                 [ "$b" = "apt-get" ] && b="apt"
                 BE_LIST="$BE_LIST $b"
@@ -318,6 +318,19 @@ be_has() {
                 fi
             done
             ;;
+        zypper)
+            # Exact search is case-insensitive (shellcheck → ShellCheck):
+            # record the real package name, which rpm -q needs later.
+            local real
+            for p in "$@"; do
+                real="$(zypper -q --no-refresh search -x -t package "$p" 2>/dev/null |
+                    awk -F'|' 'NR > 2 { gsub(/^ +| +$/, "", $2); print $2; exit }')"
+                if [ -n "$real" ]; then
+                    BE_MATCH="$real"
+                    return 0
+                fi
+            done
+            ;;
         pacman)
             for p in "$@"; do
                 if pacman -Si "$p" >/dev/null 2>&1; then
@@ -360,7 +373,7 @@ be_installed() {
     case "$mgr" in
         apt)    dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'ok installed' ;;
         apk)    apk info -e "$pkg" >/dev/null 2>&1 ;;
-        dnf)    rpm -q "$pkg" >/dev/null 2>&1 ;;
+        dnf|zypper) rpm -q "$pkg" >/dev/null 2>&1 ;;
         pacman) pacman -Qi "$pkg" >/dev/null 2>&1 ;;
         pkg)    pkg info -e "$pkg" >/dev/null 2>&1 ;;
         port)   port -q installed "$pkg" 2>/dev/null | grep -q '(active)' ;;
@@ -376,6 +389,7 @@ be_install() {
         apt)    run_priv apt-get install -y "$pkg" ;;
         apk)    run_priv apk add "$pkg" ;;
         dnf)    run_priv dnf install -y "$pkg" ;;
+        zypper) run_priv zypper --non-interactive install --no-recommends "$pkg" ;;
         pacman) run_priv pacman -S --needed --noconfirm "$pkg" ;;
         pkg)    run_priv pkg install -y "$pkg" ;;
         port)   run_priv port -N install "$pkg" ;;
@@ -398,7 +412,8 @@ be_refresh() {
     case "$1" in
         apt)    run_priv apt-get update ;;
         apk)    run_priv apk update ;;
-        pacman) run_priv pacman -Sy ;;
+        pacman) run_priv pacman -Syu --noconfirm ;;   # -Sy alone is a partial upgrade
+        zypper) run_priv zypper --non-interactive --gpg-auto-import-keys refresh ;;
         port)   run_priv port -N selfupdate ;;
         brew)   brew update ;;
         *)      return 0 ;;
@@ -411,6 +426,7 @@ be_uninstall() {
         apt)    run_priv apt-get remove -y "$pkg" ;;
         apk)    run_priv apk del "$pkg" ;;
         dnf)    run_priv dnf remove -y "$pkg" ;;
+        zypper) run_priv zypper --non-interactive remove "$pkg" ;;
         pacman) run_priv pacman -R --noconfirm "$pkg" ;;
         pkg)    run_priv pkg remove -y "$pkg" ;;
         port)   run_priv port -N uninstall "$pkg" ;;
@@ -455,6 +471,11 @@ be_search() {
         dnf)
             dnf -q list available "$term*" 2>/dev/null |
                 awk '$1 ~ /\./ && $1 !~ /^(Last|Available)/ {sub(/\.[^.]*$/, "", $1); print $1}' |
+                head -n "$SEARCH_MAX"
+            ;;
+        zypper)
+            zypper -q --no-refresh search -t package "$term" 2>/dev/null |
+                awk -F'|' 'NR > 2 { gsub(/^ +| +$/, "", $2); print $2 }' |
                 head -n "$SEARCH_MAX"
             ;;
         pacman)
@@ -910,7 +931,7 @@ unfinished() {
 
 cmd_update() {
     detect_backends
-    [ -n "$BE_LIST" ] || die "no package manager backend found (apt, apk, dnf, pacman, pkg, brew, port)"
+    [ -n "$BE_LIST" ] || die "no package manager backend found (apt, apk, dnf, zypper, pacman, pkg, brew, port)"
     require_wishlist
     index_refresh
     install_wishes
@@ -921,7 +942,7 @@ cmd_update() {
 
 cmd_install() {
     detect_backends
-    [ -n "$BE_LIST" ] || die "no package manager backend found (apt, apk, dnf, pacman, pkg, brew, port)"
+    [ -n "$BE_LIST" ] || die "no package manager backend found (apt, apk, dnf, zypper, pacman, pkg, brew, port)"
     require_wishlist
     install_wishes
     unfinished && exit 2
@@ -930,7 +951,7 @@ cmd_install() {
 
 cmd_refresh() {
     detect_backends
-    [ -n "$BE_LIST" ] || die "no package manager backend found (apt, apk, dnf, pacman, pkg, brew, port)"
+    [ -n "$BE_LIST" ] || die "no package manager backend found (apt, apk, dnf, zypper, pacman, pkg, brew, port)"
     require_wishlist
     prune_journaled
     install_wishes
@@ -940,7 +961,7 @@ cmd_refresh() {
 
 cmd_status() {
     detect_backends
-    [ -n "$BE_LIST" ] || die "no package manager backend found (apt/apk/dnf/pacman/pkg/brew/port)"
+    [ -n "$BE_LIST" ] || die "no package manager backend found (apt/apk/dnf/zypper/pacman/pkg/brew/port)"
     require_wishlist
     info "wishlist: $PACKAGES_FILE; backends:$BE_LIST"
     iter_entries status
@@ -953,7 +974,7 @@ cmd_add() {
         -h|--help) usage 0 ;;
     esac
     detect_backends
-    [ -n "$BE_LIST" ] || die "no package manager backend found (apt/apk/dnf/pacman/pkg/brew/port)"
+    [ -n "$BE_LIST" ] || die "no package manager backend found (apt/apk/dnf/zypper/pacman/pkg/brew/port)"
     require_wishlist
     if wishlist_has "$1"; then
         info "$1 is already in $PACKAGES_FILE — nothing added"

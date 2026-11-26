@@ -11,6 +11,14 @@ case "$PLATFORM" in
     *BSD)   PLATFORM="bsd" ;;
 esac
 
+# dots-setup installs its user-level fallbacks (age, direnv, uv, fnm) into
+# ~/.local/bin, which a non-interactive caller's PATH (ssh host cmd, cron,
+# su -c) does not carry: look there too so they are not misreported missing.
+case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) PATH="$PATH:$HOME/.local/bin" ;;
+esac
+
 QUIET=false
 [[ "${1:-}" == "--quiet" ]] && QUIET=true
 

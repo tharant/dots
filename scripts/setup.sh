@@ -32,8 +32,11 @@ DISTRO=""
 ENV=""            # environment layer: "wsl" (distro layers live in DISTRO)
 PKG_MGR=""
 SUDO=""
+DISTRO_LIKE=""    # os-release ID_LIKE (space-separated parent distro IDs)
 APT_UPDATED=""
 PORT_SYNCED=""
+PACMAN_SYNCED=""
+ZYPPER_REFRESHED=""
 MACPORTS_PREFIX="/opt/local"
 SUCCESS_MSG="Dotfiles deployed."
 AUDIT_LOG=""
@@ -125,14 +128,31 @@ detect_env() {
     PLATFORM="$(detect_platform)"
     info "Detected platform: $PLATFORM"
 
-    # Distro (only meaningful on Linux)
+    # Package managers and admin tools live in the sbin dirs, which are not on
+    # a non-root PATH everywhere: Alpine's /etc/profile adds them, but
+    # sshd/su/cron environments (ssh host 'curl … | bash') get /usr/bin:/bin
+    # only, where /sbin/apk is invisible. Add them for this run.
+    if [[ "$PLATFORM" != "macos" ]]; then
+        local d
+        for d in /sbin /usr/sbin /usr/local/sbin; do
+            case ":$PATH:" in
+                *":$d:"*) ;;
+                *) [[ -d "$d" ]] && PATH="$PATH:$d" ;;
+            esac
+        done
+        export PATH
+    fi
+
+    # Distro (only meaningful on Linux). Read in a subshell so os-release's
+    # NAME/VERSION/ID/... do not leak into this script's namespace.
     if [[ -r /etc/os-release ]]; then
         # shellcheck source=/dev/null
-        . /etc/os-release
-        DISTRO="${ID:-}"
+        DISTRO="$(. /etc/os-release && echo "${ID:-}")"
+        # shellcheck source=/dev/null
+        DISTRO_LIKE="$(. /etc/os-release && echo "${ID_LIKE:-}")"
     fi
     if [[ "$PLATFORM" == "linux" && -n "$DISTRO" ]]; then
-        info "Detected distro: $DISTRO"
+        info "Detected distro: $DISTRO${DISTRO_LIKE:+ (like: $DISTRO_LIKE)}"
     fi
 
     # WSL: either the distro name env var is set or the kernel says Microsoft
@@ -219,6 +239,17 @@ reattach_tty() {
 
 # --- Package installation ---
 
+distro_is() {
+    # distro_is <id>... — true when ID or any ID_LIKE entry matches one of them
+    local want id
+    for want in "$@"; do
+        for id in $DISTRO $DISTRO_LIKE; do
+            [[ "$id" == "$want" ]] && return 0
+        done
+    done
+    return 1
+}
+
 detect_pkg_mgr() {
     if [[ -n "$PKG_MGR" ]]; then
         return 0
@@ -227,15 +258,18 @@ detect_pkg_mgr() {
         macos_select_pkg_mgr
         return 0
     fi
+    # The system package manager wins; Homebrew (Linuxbrew) is only a last
+    # resort, so a Linux box with brew on PATH still gets apt/dnf/... for
+    # the core set (matching the packages(1) shim's resolution order).
     local m
-    for m in brew apt-get dnf pacman apk pkg; do
+    for m in apt-get dnf zypper pacman apk pkg brew; do
         if command_exists "$m"; then
             PKG_MGR="$m"
             info "Detected package manager: $PKG_MGR"
             return 0
         fi
     done
-    error "No supported package manager found (brew, apt-get, dnf, pacman, apk, pkg). Install dependencies manually."
+    error "No supported package manager found (apt-get, dnf, zypper, pacman, apk, pkg, brew). Install dependencies manually."
 }
 
 pkg_install() {
@@ -252,6 +286,21 @@ pkg_install() {
         APT_UPDATED=true
     fi
 
+    # pacman: sync the databases once. A bare -Sy followed by -S is a
+    # partial upgrade (unsupported on Arch), so do the full -Syu.
+    if [[ "$PKG_MGR" == "pacman" && "$PACMAN_SYNCED" != "true" ]]; then
+        info "Syncing pacman databases and upgrading (pacman -Syu)..."
+        quiet run_priv pacman -Syu --noconfirm || warn "pacman -Syu failed — installing from the current databases"
+        PACMAN_SYNCED=true
+    fi
+
+    # zypper: refresh repository metadata once
+    if [[ "$PKG_MGR" == "zypper" && "$ZYPPER_REFRESHED" != "true" ]]; then
+        info "Refreshing zypper repositories..."
+        quiet run_priv zypper --non-interactive --gpg-auto-import-keys refresh || warn "zypper refresh failed — installing from cached metadata"
+        ZYPPER_REFRESHED=true
+    fi
+
     # MacPorts likewise syncs its ports tree once per run
     if [[ "$PKG_MGR" == "port" && "$PORT_SYNCED" != "true" ]]; then
         info "Syncing the MacPorts ports tree (port selfupdate)..."
@@ -262,9 +311,10 @@ pkg_install() {
     case "$PKG_MGR" in
         brew)    quiet brew install "$@" ;;                # brew must not run as root
         port)    quiet run_priv port -N install "$@" ;;    # port must run as root
-        apt-get) quiet run_priv apt-get install -y "$@" ;;
+        apt-get) quiet run_priv env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" ;;
         dnf)     quiet run_priv dnf install -y "$@" ;;
-        pacman)  quiet run_priv pacman -S --noconfirm "$@" ;;
+        zypper)  quiet run_priv zypper --non-interactive install --no-recommends "$@" ;;
+        pacman)  quiet run_priv pacman -S --needed --noconfirm "$@" ;;
         apk)     quiet run_priv apk add "$@" ;;
         pkg)     quiet run_priv pkg install -y "$@" ;;
         *)       error "Unsupported package manager: $PKG_MGR" ;;
@@ -334,7 +384,7 @@ install_age_binary() {
     rm -rf "$tmp"
     case ":$PATH:" in
         *":$HOME/.local/bin:"*) ;;
-        *) warn "Add $HOME/.local/bin to PATH: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+        *) export PATH="$HOME/.local/bin:$PATH" ;;   # rest of this run; .bashrc adds it for shells
     esac
     info "Installed age to $HOME/.local/bin"
 }
@@ -372,7 +422,7 @@ install_direnv() {
     rm -rf "$tmp"
     case ":$PATH:" in
         *":$HOME/.local/bin:"*) ;;
-        *) warn "Add $HOME/.local/bin to PATH: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+        *) export PATH="$HOME/.local/bin:$PATH" ;;   # rest of this run; .bashrc adds it for shells
     esac
     info "Installed direnv to $HOME/.local/bin"
 }
@@ -404,6 +454,57 @@ install_just_binary() {
     run_priv install -m 0755 "$tmp/just" /usr/local/bin/just
     rm -rf "$tmp"
     info "Installed just to /usr/local/bin"
+}
+
+install_shellcheck_binary() {
+    # ShellCheck is not packaged everywhere (openSUSE Leap 16) — use the
+    # upstream static binary (the .tar.gz asset: no xz dependency)
+    local version="v0.11.0"
+    local arch="" url tmp
+
+    case "$(uname -m)" in
+        x86_64)        arch="x86_64" ;;
+        aarch64|arm64) arch="aarch64" ;;
+        *)             warn "No prebuilt shellcheck release for architecture '$(uname -m)'"; return 1 ;;
+    esac
+    url="https://github.com/koalaman/shellcheck/releases/download/$version/shellcheck-$version.linux.$arch.tar.gz"
+
+    info "Installing shellcheck from static release: $url"
+    tmp="$(mktemp -d)"
+    if ! download "$url" "$tmp/shellcheck.tar.gz"; then
+        rm -rf "$tmp"
+        return 1
+    fi
+    if ! tar -xzf "$tmp/shellcheck.tar.gz" -C "$tmp"; then
+        warn "Could not extract the shellcheck release tarball"
+        rm -rf "$tmp"
+        return 1
+    fi
+    run_priv install -m 0755 "$tmp/shellcheck-$version/shellcheck" /usr/local/bin/shellcheck
+    rm -rf "$tmp"
+    info "Installed shellcheck to /usr/local/bin"
+}
+
+prune_resolved_failures() {
+    # Drop "install: <tool>" entries for tools that are on PATH by now: a
+    # package that failed its individual retry but was then covered by a
+    # static fallback (just/direnv on EL, shellcheck on Leap) is not a
+    # failure, and must not flip the exit status. Bash 3.2: rebuild the array.
+    local kept=() f tool
+    [[ ${#FAILURES[@]} -eq 0 ]] && return 0
+    for f in "${FAILURES[@]}"; do
+        case "$f" in
+            "install: "*)
+                tool="${f#install: }"
+                if [[ "$tool" != *" "* ]] && command_exists "$tool"; then
+                    continue
+                fi
+                ;;
+        esac
+        kept+=("$f")
+    done
+    FAILURES=()
+    [[ ${#kept[@]} -eq 0 ]] || FAILURES=("${kept[@]}")
 }
 
 install_node_tarball() {
@@ -713,6 +814,41 @@ alpine_prepare() {
     run_priv apk update
 }
 
+el_prepare() {
+    # RHEL family (Rocky, Alma, CentOS Stream, RHEL): age, stow, shellcheck
+    # and friends are not in the base repos but in EPEL, whose packages lean
+    # on CRB (PowerTools on EL8). Enable both; non-fatal — whatever is still
+    # missing afterwards is retried individually / covered by the static
+    # fallbacks (just, age, direnv) in post_install_checks.
+    local major
+    # shellcheck source=/dev/null
+    major="$(. /etc/os-release && echo "${VERSION_ID%%.*}")"
+    if rpm -q epel-release >/dev/null 2>&1; then
+        info "EPEL already enabled"
+    else
+        info "Enabling EPEL (age, stow, shellcheck, ... are not in the EL base repos)..."
+        # Rocky/Alma/CentOS carry epel-release in extras; RHEL proper does not
+        if ! quiet run_priv dnf install -y epel-release &&
+           ! quiet run_priv dnf install -y \
+               "https://dl.fedoraproject.org/pub/epel/epel-release-latest-${major}.noarch.rpm"; then
+            warn "Could not enable EPEL — age, stow, shellcheck, just and direnv will likely fail"
+            FAILURES+=("el: EPEL")
+            return 0
+        fi
+    fi
+    if command_exists crb && quiet run_priv crb enable; then
+        info "CRB repository enabled"
+    elif [[ "$DISTRO" == "rhel" ]] && command_exists subscription-manager &&
+         quiet run_priv subscription-manager repos --enable "codeready-builder-for-rhel-${major}-$(uname -m)-rpms"; then
+        info "CodeReady Builder repository enabled"
+    elif quiet run_priv dnf config-manager --set-enabled crb ||
+         quiet run_priv dnf config-manager --set-enabled powertools; then
+        info "CRB repository enabled"
+    else
+        warn "Could not enable CRB/PowerTools — some EPEL packages may not install"
+    fi
+}
+
 apt_candidate_version() {
     # The version apt would install, or empty when the package is unavailable
     apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/ {print $2; exit}'
@@ -867,7 +1003,7 @@ install_fnm() {
     rm -rf "$tmp"
     case ":$PATH:" in
         *":$HOME/.local/bin:"*) ;;
-        *) warn "Add $HOME/.local/bin to PATH: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+        *) export PATH="$HOME/.local/bin:$PATH" ;;   # rest of this run; .bashrc adds it for shells
     esac
     info "Installed fnm to $HOME/.local/bin"
 }
@@ -969,6 +1105,15 @@ install_runtimes() {
 post_install_checks() {
     # Never fail silently: verify the tools the rest of the run depends on
     local tool
+    # just is not packaged everywhere (Debian bookworm, EL9/EPEL): fall back
+    # to the upstream static musl binary on any Linux
+    if [[ "$PLATFORM" == "linux" ]] && ! command_exists just; then
+        install_just_binary || FAILURES+=("install: just (static binary)")
+    fi
+    # Likewise shellcheck (not packaged on openSUSE Leap 16)
+    if [[ "$PLATFORM" == "linux" ]] && ! command_exists shellcheck; then
+        install_shellcheck_binary || FAILURES+=("install: shellcheck (static binary)")
+    fi
     for tool in git curl just tmux shellcheck jq; do
         if ! command_exists "$tool"; then
             warn "Expected tool '$tool' is still missing after install"
@@ -987,12 +1132,13 @@ post_install_checks() {
     if ! command_exists direnv; then
         install_direnv || error "direnv is required for the direnv integration but could not be installed."
     fi
+    prune_resolved_failures
 }
 
 install_tmux_mem_cpu_load() {
     # Memory/CPU/load bar binary for the tmux-powerline segment. Packaged for
-    # Homebrew and MacPorts but not for Debian or Alpine, so Linux distros
-    # build it from the pinned upstream release. Non-fatal throughout: the
+    # Homebrew, MacPorts and FreeBSD but not for Debian or Alpine, so Linux
+    # distros build it from the pinned upstream release. Non-fatal: the
     # segment silently drops out of the bar when the binary is missing
     # (upstream probes it before running); the rest of the bar is unaffected.
     if command_exists tmux-mem-cpu-load; then
@@ -1002,8 +1148,8 @@ install_tmux_mem_cpu_load() {
 
     local version="v3.8.3" tmp
 
-    if [[ "$PKG_MGR" == "brew" || "$PKG_MGR" == "port" ]]; then
-        # Homebrew and MacPorts both package it. Kept out of the core batch
+    if [[ "$PKG_MGR" == "brew" || "$PKG_MGR" == "port" || "$PKG_MGR" == "pkg" ]]; then
+        # Homebrew, MacPorts and FreeBSD pkg all package it. Kept out of the core batch
         # so this function is the single documented seam for the binary.
         pkg_install tmux-mem-cpu-load || FAILURES+=("install: tmux-mem-cpu-load")
         return 0
@@ -1024,7 +1170,7 @@ install_tmux_mem_cpu_load() {
     case "$PKG_MGR" in
         apt-get) toolchain=(build-essential cmake) ;;
         apk)     toolchain=(build-base cmake) ;;
-        dnf)     toolchain=(gcc-c++ make cmake) ;;
+        dnf|zypper) toolchain=(gcc-c++ make cmake) ;;
         pacman)  toolchain=(base-devel cmake) ;;
         *)
             warn "No known C++ toolchain package for $PKG_MGR — the tmux mem/cpu segment is skipped"
@@ -1083,7 +1229,7 @@ install_core() {
             macos_default_shell
             ;;
         linux)
-            if [[ "$DISTRO" == "alpine" ]]; then
+            if distro_is alpine; then
                 alpine_prepare
                 info "Installing core packages via apk..."
                 local alpine_pkgs=(bash coreutils findutils util-linux git age stow just tmux
@@ -1100,15 +1246,23 @@ install_core() {
                     locales ca-certificates curl wl-clipboard xz-utils direnv jq bc
                 install_debian_extra
             else
-                info "Installing core packages..."
+                # dnf (Fedora, EL), zypper (openSUSE/SLES), pacman (Arch)
+                if [[ "$PKG_MGR" == "dnf" ]] && distro_is rhel centos; then
+                    el_prepare
+                fi
+                info "Installing core packages via $PKG_MGR..."
+                # tar/gzip: minimal EL and openSUSE images ship without them,
+                # and the uv installer plus the static just/age fallbacks need both
                 pkg_install_set git age stow just tmux shellcheck bash coreutils direnv curl \
-                    ca-certificates jq bc
+                    ca-certificates jq bc tar gzip
             fi
             ;;
         bsd)
             info "Installing core packages via pkg..."
-            pkg_install_set git age stow just tmux shellcheck bash coreutils direnv curl \
-                ca_root_nss jq bc
+            # FreeBSD packages ShellCheck as hs-ShellCheck (Haskell port);
+            # bc ships in the base system, not as a package
+            pkg_install_set git age stow just tmux hs-ShellCheck bash coreutils direnv curl \
+                ca_root_nss jq
             ;;
     esac
 
@@ -1124,14 +1278,14 @@ preflight_checks() {
         pkg_install git || FAILURES+=("install: git")
     fi
     if ! command_exists curl; then
-        if [[ "$DISTRO" == "alpine" ]] && command_exists wget; then
+        if distro_is alpine && command_exists wget; then
             info "curl is missing — downloads will fall back to busybox wget"
         else
             warn "curl is missing — release-tarball fallbacks need it"
             FAILURES+=("preflight: curl missing")
         fi
     fi
-    if [[ "$DISTRO" == "alpine" && -z "${BASH_VERSION:-}" ]]; then
+    if distro_is alpine && [[ -z "${BASH_VERSION:-}" ]]; then
         error "Alpine: this script must run under bash (apk add bash git curl, then re-run)"
     fi
 }
@@ -1321,7 +1475,7 @@ stow_packages() {
     stow_one_dir "$DOTS_DIR/common" "common" "$action_msg"
     stow_one_dir "$DOTS_DIR/$PLATFORM" "$PLATFORM" "$action_msg"
     # Environment/distro layers on top of the platform packages
-    if [[ "$DISTRO" == "alpine" ]]; then
+    if distro_is alpine; then
         stow_one_dir "$DOTS_DIR/alpine" "alpine" "$action_msg"
     fi
     if [[ "$ENV" == "wsl" ]]; then

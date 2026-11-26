@@ -66,15 +66,26 @@ need the terminal.
 
 **Detection.** `uname -s` maps Darwin→`macos`, Linux→`linux`, and anything
 matching `*BSD`→`bsd`; anything else is fatal ("Unsupported platform"). On
-Linux the distro ID comes from `/etc/os-release`. WSL is detected from
+Linux the distro `ID` and `ID_LIKE` come from `/etc/os-release` (read in a
+subshell, so its variables do not leak into the script); distro checks match
+either, so derivatives are recognised by family — e.g. postmarketOS
+(`ID_LIKE=alpine`) gets the Alpine treatment and Rocky/Alma/CentOS
+(`ID_LIKE` containing `rhel`/`centos`) the EL one. Outside macOS, `/sbin`,
+`/usr/sbin` and `/usr/local/sbin` are appended to `PATH` for the run when
+missing — a non-root sshd/su/cron `PATH` is just `/usr/bin:/bin`, where
+Alpine's `/sbin/apk` would be invisible. WSL is detected from
 `WSL_DISTRO_NAME` or the kernel string in `/proc/version`; an OrbStack kernel
 string on macOS is reported informationally only.
 
 **Package managers.** On macOS the choice is between Homebrew (`brew`) and
 MacPorts (`port`) — see the macos entry below. Elsewhere the detection order
-is `brew`, `apt-get`, `dnf`, `pacman`, `apk`, `pkg`, and none found is fatal.
-`apt-get update` (and on MacPorts `port selfupdate`) runs once, before the
-first install. Batch installs are retried package by package when the batch
+is `apt-get`, `dnf`, `zypper`, `pacman`, `apk`, `pkg`, then `brew` — the
+system package manager always wins over a Linuxbrew on `PATH` — and none
+found is fatal. Once per run, before the first install, the index is
+refreshed: `apt-get update`, `zypper refresh`, `pacman -Syu` (a full upgrade:
+`-Sy` followed by `-S` is an unsupported partial upgrade on Arch) and on
+MacPorts `port selfupdate`. apt runs with `DEBIAN_FRONTEND=noninteractive`,
+zypper with `--non-interactive --no-recommends`, pacman with `--needed`. Batch installs are retried package by package when the batch
 fails, so one missing or renamed package does not sink the whole set;
 individual failures are recorded as non-fatal.
 
@@ -130,29 +141,48 @@ Per-platform behaviour:
   not always on `PATH` (OrbStack syncs the Mac's `PATH` into its machines;
   non-login shells) even when the `locales` package is installed (skipped with
   a recorded failure if neither is found, or if `/etc/locale.gen` is missing).
-- **Other Linux** (dnf/pacman/pkg) — `git age stow just tmux shellcheck bash
-  coreutils direnv curl ca-certificates`.
-- **FreeBSD** — `git age stow just tmux shellcheck bash coreutils direnv curl
-  ca_root_nss` via `pkg`.
+- **Other Linux** (dnf, zypper, pacman) — `git age stow just tmux shellcheck
+  bash coreutils direnv curl ca-certificates jq bc tar gzip` (tar/gzip because
+  minimal EL and openSUSE images lack them). On the RHEL family (dnf
+  with `ID`/`ID_LIKE` `rhel` or `centos`: Rocky, Alma, CentOS Stream, RHEL)
+  EPEL is enabled first — `epel-release` from the distro's repos, else the
+  `epel-release-latest-<major>` rpm from dl.fedoraproject.org — plus CRB
+  (`crb enable`, `subscription-manager` on RHEL, else `dnf config-manager`
+  for `crb`/`powertools`), because age, stow and shellcheck live there.
+  Both steps are non-fatal. EPEL still lacks `direnv` (EL9/EL10) and `just`
+  (EL9): the static fallbacks below cover them.
+- **FreeBSD** — `git age stow just tmux hs-ShellCheck bash coreutils direnv
+  curl ca_root_nss jq` via `pkg` (FreeBSD names the ShellCheck package
+  `hs-ShellCheck`; `bc` is part of the base system).
 
 Post-install: `tmux-mem-cpu-load` is installed for the tmux-powerline
-mem/cpu segment — the Homebrew formula or MacPorts port on macOS, built
+mem/cpu segment — the Homebrew formula or MacPorts port on macOS, the
+`pkg` package on FreeBSD, built
 from source at the pinned upstream release (`v3.8.3`) on Linux, where
 neither Debian nor Alpine packages it. The build installs the native C++
 toolchain plus cmake — `build-essential` on apt, `build-base` on apk,
-`gcc-c++ make` on dnf, `base-devel` on pacman — and installs the binary into
+`gcc-c++ make` on dnf and zypper, `base-devel` on pacman — and installs the binary into
 `/usr/local/bin`. Any other package manager or platform skips it with a
 recorded non-fatal failure — on failure the
-segment simply drops out of the status bar. Then `git curl just tmux
+segment simply drops out of the status bar. On Linux a still-missing
+`just` falls back to the upstream static musl binary (`1.58.0`) and a
+still-missing `shellcheck` (openSUSE Leap 16 has no package) to the upstream
+static binary (`v0.11.0`), both into `/usr/local/bin`, whatever the package
+manager. Then `git curl just tmux
 shellcheck` are each verified (a missing
 tool is a recorded non-fatal failure), a missing `stow` is **fatal**, a
 missing `age` falls back to the static release `v1.3.1` installed to
-`~/.local/bin` (mode 0755), warning if that directory is not already on
-`PATH`, and a missing `direnv` falls back to the static release `v2.37.1`
+`~/.local/bin` (mode 0755), and a missing `direnv` falls back to the static release `v2.37.1`
 the same way — but as a **hard** requirement: if the fallback also fails the
 run aborts ("direnv is required for the direnv integration but could not be
 installed"), because the direnv stow package is useless without its hook
-binary.
+binary. Fallbacks into `~/.local/bin` (age, direnv, uv, fnm) put that
+directory on `PATH` for the rest of the run — so `dots-decrypt` finds a
+fallback `age` — instead of warning about it; `.bashrc` adds it for
+interactive shells. Finally, an `install: <tool>` failure recorded by a
+package retry is dropped again when a fallback put `<tool>` on `PATH`
+(e.g. `just`/`direnv` on EL), so a covered package does not flip the exit
+status.
 
 **Runtime managers.** After the post-install checks (macOS, Linux and WSL
 only — BSD is dotfiles-only and skips this step with an informational
@@ -281,9 +311,11 @@ options.` and exits 1. A run can print plenty of WARNING lines and still exit
 - `/opt/local` — MacPorts prefix (installed on Intel Macs).
 - `~/.local/bin/age`, `~/.local/bin/age-keygen` — static age fallback (0755).
 - `~/.local/bin/direnv` — static direnv fallback (0755).
+- `/usr/local/bin/shellcheck` — static shellcheck fallback (any Linux without a package).
 - `~/.local/bin/uv`, `~/.local/bin/fnm` — runtime-manager installs (macOS/Linux/WSL).
 - `~/.sdkman/` — sdkman install, with `sdkman_auto_answer=true` in `etc/config`.
-- `/usr/local/bin/just`, `/usr/local/lib/nodejs/` — static just / Node.js fallbacks (Debian).
+- `/usr/local/bin/just` — static just fallback (any Linux without a `just` package).
+- `/usr/local/lib/nodejs/` — Node.js tarball fallback (Debian).
 - `~/.packages` — seeded from `templates/packages/.packages` in the full
   and `--force` runs when absent; the [packages](packages.md) wishlist.
 - `scripts/decrypt.sh`, `scripts/verify.sh` — invoked for the decrypt and verify steps.
