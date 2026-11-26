@@ -1,10 +1,10 @@
-
 " >>> vimtutor >>> (managed block; removed by setup.sh --uninstall)
-let g:vimtutor_data = '/home/jlambert/.local/share/vimtutor'
-if filereadable('/home/jlambert/.local/share/vimtutor/config/vimrc.common')
-  source /home/jlambert/.local/share/vimtutor/config/vimrc.common
-else
-  echom 'vimtutor: missing /home/jlambert/.local/share/vimtutor -- re-run setup.sh'
+" Optional: VIMTUTOR ADVANCED (github.com/tharant/vimtutor). Kept in dots
+" with this marker so its setup.sh sees the file as wired and leaves the stow
+" symlink alone; the path is $HOME-relative so it works on every machine.
+" vimrc.common defaults g:vimtutor_data to ~/.local/share/vimtutor itself.
+if filereadable(expand('~/.local/share/vimtutor/config/vimrc.common'))
+  source ~/.local/share/vimtutor/config/vimrc.common
 endif
 " <<< vimtutor <<<
 set nocompatible              " be iMproved, required
